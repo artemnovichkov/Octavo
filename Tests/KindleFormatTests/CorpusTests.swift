@@ -45,7 +45,11 @@ private func files(withExtension ext: String) -> [URL] {
 /// A wrong codepage offset turns Cyrillic titles into mojibake without failing anything
 /// else, so the corpus check looks at the decoded characters.
 @Test func decodesCyrillicTitles() {
-    let cyrillic = files(withExtension: "azw3")
+    // Same bail-out as the other corpus tests: no library on this machine (CI), nothing to check.
+    // With a corpus present the emptiness check below stays, so the test cannot go vacuous.
+    let urls = files(withExtension: "azw3")
+    guard !urls.isEmpty else { return }
+    let cyrillic = urls
         .map { EbookReader.metadata(of: $0) }
         .filter { $0.title.unicodeScalars.contains { scalar in (0x0400...0x04FF).contains(scalar.value) } }
     #expect(!cyrillic.isEmpty, "в корпусе нет книг с кириллицей в названии")
