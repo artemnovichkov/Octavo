@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Octavo.app
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Derive version from the tag
+        id: v
+        run: |
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "arch=$(uname -m)"
+          } >> "$GITHUB_OUTPUT"
+          # v0.2.0-beta1 and friends ship as pre-releases.
+          case "$version" in
+            *-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Build every product
+        run: swift build -c release
+
+      - name: Assemble Octavo.app
+        env:
+          OCTAVO_VERSION: ${{ steps.v.outputs.version }}
+          OCTAVO_BUILD: ${{ github.run_number }}
+        run: ./Scripts/make-app.sh release
+
+      # ditto, not zip: it is Apple's archiver for signed bundles and keeps the extended
+      # attributes the ad-hoc signature needs. A DMG would not help — quarantine propagates
+      # out of a DMG exactly as it does out of a zip.
+      - name: Package
+        id: pkg
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          ARCH: ${{ steps.v.outputs.arch }}
+        run: |
+          mkdir -p dist
+          app_zip="dist/Octavo-${VERSION}-macos-${ARCH}.zip"
+          ditto -c -k --keepParent build/Octavo.app "$app_zip"
+
+          bin="$(swift build -c release --show-bin-path)"
+          tar -C "$bin" -czf "dist/octavo-cli-${VERSION}-macos-${ARCH}.tar.gz" \
+            mtpprobe octavo-sync octavo-convert
+
+          ( cd dist && shasum -a 256 -- * > SHA256SUMS.txt )
+          ls -l dist
+          echo "app_zip=$app_zip" >> "$GITHUB_OUTPUT"
+
+      # Catches "Octavo is damaged and can't be opened" here rather than on a user's Mac.
+      - name: Verify the signature survives the round trip
+        run: |
+          rm -rf "$RUNNER_TEMP/verify"
+          mkdir -p "$RUNNER_TEMP/verify"
+          ditto -x -k "${{ steps.pkg.outputs.app_zip }}" "$RUNNER_TEMP/verify"
+          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/verify/Octavo.app"
+          plutil -lint "$RUNNER_TEMP/verify/Octavo.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            "$RUNNER_TEMP/verify/Octavo.app/Contents/Info.plist"
+
+      - name: Create the GitHub release
+        run: |
+          gh release create "${{ steps.v.outputs.tag }}" \
+            --title "Octavo ${{ steps.v.outputs.version }}" \
+            --generate-notes \
+            --verify-tag \
+            --prerelease=${{ steps.v.outputs.prerelease }} \
+            dist/*

@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Recorded in every log: the runner image moves forward on its own, and a build that
+      # only fails in CI is nearly always a toolchain gap rather than a code change.
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        run: swift build
+
+      # The catalogue tests are gated on OCTAVO_NETWORK_TESTS, which is unset here, so this
+      # run touches no network. Corpus and library tests bail out quietly without a library.
+      - name: Test
+        run: swift test
+
+      - name: Assemble Octavo.app
+        run: ./Scripts/make-app.sh debug
+
+      - name: Verify the bundle
+        run: |
+          codesign --verify --deep --strict --verbose=2 build/Octavo.app
+          plutil -lint build/Octavo.app/Contents/Info.plist
