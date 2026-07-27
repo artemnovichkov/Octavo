@@ -4,58 +4,44 @@ struct DeviceToolbar: ToolbarContent {
     @Environment(AppModel.self) private var model
 
     var body: some ToolbarContent {
-        ToolbarItem(placement: .status) {
-            deviceStatus.labelStyle(.titleAndIcon)
+        ToolbarItem(placement: .primaryAction) {
+            DeviceStatusButton()
         }
 
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+
+        // Refresh stays icon-only like every other secondary action; Sync is the only titled,
+        // tinted button in the bar, and only while there's something to send — so the eye lands
+        // on it exactly when it matters instead of every button competing for attention.
+        ToolbarItemGroup(placement: .primaryAction) {
             Button {
-                Task { await refreshOrConnect() }
+                Task { await model.refreshOrConnect() }
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(model.syncProgress != nil)
-        }
 
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                Task { await model.sync() }
-            } label: {
-                Label(syncTitle, systemImage: "arrow.up.arrow.down.circle.fill")
-            }
-            .labelStyle(.titleAndIcon)
-            .disabled(!canSync)
-            .help(syncHelp)
+            syncButton
         }
     }
 
+    // `.glass`/`.glassProminent` are distinct concrete PrimitiveButtonStyle types, so picking
+    // between them can't be a ternary on one `.buttonStyle(_:)` call — split into two branches.
     @ViewBuilder
-    private var deviceStatus: some View {
-        switch model.deviceState {
-        case .disconnected:
-            Label("Kindle not connected", systemImage: "cable.connector.slash")
-                .foregroundStyle(.secondary)
-        case .connecting:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Connecting…")
-            }
-        case .waitingForMTP:
-            // Not an error: the cable is in, the Kindle just isn't offering MTP. Styled to
-            // match .disconnected so the orange triangle keeps meaning "something is wrong".
-            Label("Kindle connected, but not in MTP mode", systemImage: "bolt.badge.clock")
-                .foregroundStyle(.secondary)
-                .help("Unlock the Kindle screen or choose file transfer on the device")
-        case .connected(let snapshot):
-            Label(
-                "\(snapshot.name) — \(snapshot.booksOnDevice) files, \(format(snapshot.freeSpace)) free",
-                systemImage: "book.closed.fill"
-            )
-            .help(spaceDetail(snapshot))
-        case .failed(let message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .help(message)
+    private var syncButton: some View {
+        let label = Button {
+            Task { await model.sync() }
+        } label: {
+            Label(syncTitle, systemImage: "arrow.up.arrow.down")
+        }
+        .labelStyle(.titleAndIcon)
+        .disabled(!canSync)
+        .help(syncHelp)
+
+        if canSync {
+            label.buttonStyle(.glassProminent)
+        } else {
+            label.buttonStyle(.glass)
         }
     }
 
@@ -73,22 +59,6 @@ struct DeviceToolbar: ToolbarContent {
         guard let plan = model.plan else { return "Connect a Kindle" }
         guard !plan.send.isEmpty else { return "Everything is already on the device" }
         return "To send: \(Plural.books(plan.send.count)), \(format(UInt64(max(plan.totalBytes, 0))))"
-    }
-
-    private func spaceDetail(_ snapshot: DeviceController.Snapshot) -> String {
-        let used = snapshot.capacity > snapshot.freeSpace ? snapshot.capacity - snapshot.freeSpace : 0
-        return "\(format(used)) used of \(format(snapshot.capacity))"
-    }
-
-    private func refreshOrConnect() async {
-        model.loadLibrary()
-        if model.isConnected {
-            await model.refreshPlan()
-        } else {
-            // A connect the user asked for, so a failure here is reported as a real error
-            // rather than the watcher's quieter .waitingForMTP.
-            await model.connect()
-        }
     }
 
     private func format(_ bytes: UInt64) -> String {

@@ -97,8 +97,7 @@ do {
     }
 
     if !skipBackup {
-        let backup = URL.homeDirectory
-            .appending(path: "Library/Application Support/Octavo/device-backup")
+        let backup = SyncEngine.defaultBackupDirectory
         print("\nBacking up documents/ to \(backup.path(percentEncoded: false))")
         try engine.backupDocuments(to: backup) { name, index, total in
             print("  [\(index + 1)/\(total)] \(name)")

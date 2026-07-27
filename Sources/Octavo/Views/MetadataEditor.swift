@@ -14,7 +14,16 @@ struct MetadataEditor: View {
     @State private var searchError: String?
     @State private var applying: MetadataCandidate.ID?
 
-    private let fetcher = MetadataFetcher()
+    /// Rebuilt per search rather than stored, so a source toggled off in Settings ▸ Metadata
+    /// while this sheet is already open takes effect on the next search.
+    private var fetcher: MetadataFetcher {
+        let preferences = Preferences.shared
+        var sources: MetadataFetcher.Sources = []
+        if preferences.useOpenLibrary { sources.insert(.openLibrary) }
+        if preferences.useFantLab { sources.insert(.fantLab) }
+        if preferences.useGoogleBooks { sources.insert(.googleBooks) }
+        return MetadataFetcher(sources: sources)
+    }
 
     init(book: Book) {
         _draft = State(initialValue: book)

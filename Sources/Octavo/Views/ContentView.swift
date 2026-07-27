@@ -5,8 +5,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
-    @State private var isImporting = false
-    @State private var pendingRemoval: [Book] = []
+    @FocusState private var searchFocused: Bool
 
     /// azw3/mobi/cbz/fb2 have no system-declared UTType, so they are derived from the
     /// filename extension.
@@ -21,16 +20,22 @@ struct ContentView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220)
         } content: {
-            BookTable(pendingRemoval: $pendingRemoval)
+            BookTable()
                 .navigationSplitViewColumnWidth(min: 420, ideal: 640)
         } detail: {
             DetailPane()
         }
         .searchable(text: $model.search, placement: .toolbar, prompt: "Search by title, author, series")
+        .searchFocused($searchFocused)
+        .onChange(of: model.searchFocusRequests) { _, _ in searchFocused = true }
         .toolbar {
+            DeviceToolbar()
+
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    isImporting = true
+                    model.isImportingFiles = true
                 } label: {
                     Label("Add books", systemImage: "plus")
                 }
@@ -39,9 +44,8 @@ struct ContentView: View {
                 .disabled(model.store == nil)
             }
         }
-        .toolbar { DeviceToolbar() }
         .fileImporter(
-            isPresented: $isImporting,
+            isPresented: $model.isImportingFiles,
             allowedContentTypes: importableTypes,
             allowsMultipleSelection: true
         ) { result in
@@ -72,17 +76,17 @@ struct ContentView: View {
         .confirmationDialog(
             removalPrompt,
             isPresented: Binding(
-                get: { !pendingRemoval.isEmpty },
-                set: { if !$0 { pendingRemoval = [] } }
+                get: { !model.pendingRemoval.isEmpty },
+                set: { if !$0 { model.pendingRemoval = [] } }
             ),
             titleVisibility: .visible
         ) {
             Button("Remove", role: .destructive) {
-                let books = pendingRemoval
-                pendingRemoval = []
+                let books = model.pendingRemoval
+                model.pendingRemoval = []
                 Task { await model.removeFromDevice(books) }
             }
-            Button("Cancel", role: .cancel) { pendingRemoval = [] }
+            Button("Cancel", role: .cancel) { model.pendingRemoval = [] }
         } message: {
             Text("The files will be deleted from the Kindle. Reading progress and notes stay, and so do the books in the library.")
         }
@@ -93,9 +97,9 @@ struct ContentView: View {
     }
 
     private var removalPrompt: String {
-        pendingRemoval.count == 1
-            ? "Remove “\(pendingRemoval[0].title)” from the device?"
-            : "Remove \(Plural.books(pendingRemoval.count)) from the device?"
+        model.pendingRemoval.count == 1
+            ? "Remove “\(model.pendingRemoval[0].title)” from the device?"
+            : "Remove \(Plural.books(model.pendingRemoval.count)) from the device?"
     }
 }
 
@@ -136,55 +140,8 @@ struct DetailPane: View {
     }
 }
 
-struct SidebarView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var model = model
-
-        List(selection: $model.filter) {
-            Section {
-                label(.all, "books.vertical", model.books.count)
-                label(.onDevice, "checkmark.circle", model.plan?.upToDate.count)
-                label(.notOnDevice, "arrow.up.circle", model.plan?.send.count)
-                label(.needsConversion, "wand.and.sparkles", model.plan?.send.filter(\.needsConversion).count)
-            }
-
-            Section("Authors") {
-                ForEach(model.authors, id: \.self) { author in
-                    Label(author, systemImage: "person").tag(AppModel.Filter.author(author))
-                }
-            }
-
-            if !model.series.isEmpty {
-                Section("Series") {
-                    ForEach(model.series, id: \.self) { series in
-                        Label(series, systemImage: "square.stack").tag(AppModel.Filter.series(series))
-                    }
-                }
-            }
-
-            if !model.tags.isEmpty {
-                Section("Tags") {
-                    ForEach(model.tags, id: \.self) { tag in
-                        Label(tag, systemImage: "tag").tag(AppModel.Filter.tag(tag))
-                    }
-                }
-            }
-        }
-    }
-
-    private func label(_ filter: AppModel.Filter, _ symbol: String, _ count: Int?) -> some View {
-        Label(filter.title, systemImage: symbol)
-            .badge(count ?? 0)
-            .tag(filter)
-    }
-}
-
 struct BookTable: View {
     @Environment(AppModel.self) private var model
-    @Binding var pendingRemoval: [Book]
-    @State private var editing: Book?
 
     var body: some View {
         @Bindable var model = model
@@ -217,7 +174,7 @@ struct BookTable: View {
             model.importFiles(urls)
             return true
         }
-        .sheet(item: $editing) { MetadataEditor(book: $0) }
+        .sheet(item: $model.editingBook) { MetadataEditor(book: $0) }
     }
 
     private var table: some View {
@@ -262,7 +219,7 @@ struct BookTable: View {
         .contextMenu(forSelectionType: Book.ID.self) { ids in
             menu(for: ids)
         } primaryAction: { ids in
-            if let book = books(for: ids).first { editing = book }
+            if let book = books(for: ids).first { model.editingBook = book }
         }
         .overlay {
             if model.filteredBooks.isEmpty { emptyState }
@@ -274,12 +231,12 @@ struct BookTable: View {
         let chosen = books(for: ids)
         if !chosen.isEmpty {
             if chosen.count == 1 {
-                Button("Metadata…", systemImage: "pencil") { editing = chosen[0] }
+                Button("Metadata…", systemImage: "pencil") { model.editingBook = chosen[0] }
             }
-            Button("Show in Finder", systemImage: "folder") { revealInFinder(chosen) }
+            Button("Show in Finder", systemImage: "folder") { model.revealInFinder(chosen) }
             Divider()
             Button("Remove from device", systemImage: "eject", role: .destructive) {
-                pendingRemoval = chosen
+                model.requestRemoval(chosen)
             }
             .disabled(!chosen.contains { model.status(of: $0) == .synced })
         }
@@ -306,11 +263,6 @@ struct BookTable: View {
 
     private func books(for ids: Set<Book.ID>) -> [Book] {
         model.filteredBooks.filter { ids.contains($0.id) }
-    }
-
-    private func revealInFinder(_ books: [Book]) {
-        let urls = books.map { model.libraryRoot.appending(path: $0.path) }
-        NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
     private func color(for status: BookStatus) -> Color {

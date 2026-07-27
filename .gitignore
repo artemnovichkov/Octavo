@@ -6,3 +6,9 @@ dist/
 *.xcuserdatad
 xcuserdata/
 *.xcuserstate
+
+# tuist generate — regenerated from Project.swift, not checked in
+Octavo.xcodeproj/
+Octavo.xcworkspace/
+Derived/
+.tuist-bin/

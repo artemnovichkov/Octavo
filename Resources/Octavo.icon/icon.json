@@ -1,0 +1,64 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.29804,0.27451,0.83922,1.00000",
+          "srgb:0.48627,0.22745,0.92941,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0,
+            "y" : 1
+          },
+          "stop" : {
+            "x" : 1,
+            "y" : 0
+          }
+        }
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.19216,0.17647,0.54510,1.00000",
+          "srgb:0.31765,0.14902,0.60392,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0,
+            "y" : 1
+          },
+          "stop" : {
+            "x" : 1,
+            "y" : 0
+          }
+        }
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "page.png",
+          "name" : "Page"
+        }
+      ],
+      "name" : "Page",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.34999999999999998
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

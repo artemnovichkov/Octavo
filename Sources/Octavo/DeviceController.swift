@@ -102,6 +102,7 @@ actor DeviceController {
     /// UI can update while the transfer runs.
     func sync(
         books: [Book],
+        pruneCache: Bool = false,
         shouldStop: @Sendable @escaping () -> Bool,
         progress: @Sendable @escaping (SyncEngine.Progress) -> Void
     ) throws -> SyncPlan {
@@ -110,6 +111,7 @@ actor DeviceController {
         let plan = try engine.plan(books: books, manifest: manifest)
         guard !plan.isEmpty || manifest.adoptedFromCalibre else { return plan }
         _ = try engine.execute(plan, manifest: manifest, onProgress: progress, shouldStop: shouldStop)
+        if pruneCache { engine.pruneConversionCache(books: books) }
         return plan
     }
 

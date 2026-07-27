@@ -62,6 +62,11 @@ public final class SyncEngine {
     public let documentsHandle: UInt32
     public var conversionCache = ConversionCache.default
 
+    /// Where `octavo-sync --apply` and the app's "back up before first sync" setting both pull
+    /// documents/ to, by default — one constant so the two agree without either hardcoding it.
+    public static let defaultBackupDirectory = URL.homeDirectory
+        .appending(path: "Library/Application Support/Octavo/device-backup")
+
     public init(library: CalibreLibraryStore, session: MTPSession) throws {
         self.library = library
         self.session = session
@@ -278,6 +283,18 @@ public final class SyncEngine {
         // handful of files, which is idempotent.
         try saveManifest(updated)
         return updated
+    }
+
+    /// Drops cached conversions no current book would produce — a book removed from the
+    /// library, or one re-converted after its source file changed leaves its old cache entry
+    /// behind otherwise, since `ConversionCache`'s key folds in size and modification date.
+    public func pruneConversionCache(books: [Book]) {
+        var wanted: Set<String> = []
+        for book in books {
+            guard bestFormat(for: book) == nil, let format = convertibleFormat(for: book) else { continue }
+            wanted.insert(conversionCache.cachedURL(for: book, format: format).lastPathComponent)
+        }
+        conversionCache.prune(keeping: wanted)
     }
 
     /// Pulls every file in documents/ to disk. Run before the first write.

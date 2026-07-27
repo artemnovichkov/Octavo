@@ -12,21 +12,12 @@ struct OctavoApp: App {
         }
         .defaultSize(width: 1320, height: 820)
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("New Library…") {
-                    if let url = LibraryPanels.chooseNewLibrary() { model.createLibrary(at: url) }
-                }
-                .keyboardShortcut("n", modifiers: [.command, .option])
-                Button("Open Library…") {
-                    if let url = LibraryPanels.chooseExistingLibrary() { model.openLibrary(at: url) }
-                }
-                .keyboardShortcut("o")
-                Divider()
-                Button("Refresh library") { model.loadLibrary() }
-                    .keyboardShortcut("r")
-                Button("Sync") { Task { await model.sync() } }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
-            }
+            AppCommands(model: model)
+        }
+
+        Settings {
+            SettingsView()
+                .environment(model)
         }
     }
 }

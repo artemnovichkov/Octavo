@@ -69,7 +69,7 @@ to attempt a launch, dismiss the warning, and press **Open Anyway** in
 If you instead see *"Octavo is damaged and can't be opened"*, that is a broken signature rather than
 quarantine — please [open an issue](https://github.com/artemnovichkov/Octavo/issues).
 
-Requires macOS 15 or later on Apple Silicon.
+Requires macOS 26 or later on Apple Silicon.
 
 ## Tech stack
 
@@ -84,7 +84,7 @@ No external dependencies at all — SwiftPM resolves nothing, everything comes f
 | `SyncEngine` | Library↔device diff, on-device manifest, conversion cache, transfer. |
 | `Octavo` | **SwiftUI** app: `@MainActor @Observable` model over a `DeviceController` actor. |
 
-Swift 6 language mode with strict concurrency, Swift Testing, SwiftPM, macOS 15+, Apple Silicon.
+Swift 6 language mode with strict concurrency, Swift Testing, SwiftPM, macOS 26+, Apple Silicon.
 Dependencies run one way: `Octavo → SyncEngine → {MTPKit, CalibreLibrary, KindleFormat}`.
 
 ## Build from source

@@ -1,3 +1,4 @@
+import AppKit
 import CalibreLibrary
 import Foundation
 import KindleFormat
@@ -26,6 +27,39 @@ final class AppModel {
             case .author(let name), .series(let name), .tag(let name): return name
             }
         }
+
+        /// Round-trips through `Preferences.lastFilter` so "remember the last filter" survives
+        /// a relaunch. Facet filters are prefixed by kind since the name alone is ambiguous.
+        var storageKey: String {
+            switch self {
+            case .all: return "all"
+            case .onDevice: return "onDevice"
+            case .notOnDevice: return "notOnDevice"
+            case .needsConversion: return "needsConversion"
+            case .author(let name): return "author:\(name)"
+            case .series(let name): return "series:\(name)"
+            case .tag(let name): return "tag:\(name)"
+            }
+        }
+
+        init?(storageKey: String) {
+            switch storageKey {
+            case "all": self = .all
+            case "onDevice": self = .onDevice
+            case "notOnDevice": self = .notOnDevice
+            case "needsConversion": self = .needsConversion
+            default:
+                guard let separator = storageKey.firstIndex(of: ":") else { return nil }
+                let kind = storageKey[..<separator]
+                let name = String(storageKey[storageKey.index(after: separator)...])
+                switch kind {
+                case "author": self = .author(name)
+                case "series": self = .series(name)
+                case "tag": self = .tag(name)
+                default: return nil
+                }
+            }
+        }
     }
 
     /// `needsSetup` is what tells "no library chosen yet" apart from "the library is broken":
@@ -42,6 +76,21 @@ final class AppModel {
         var total: Int
     }
 
+    /// A sidebar facet row: a name (author/series/tag) plus how many books carry it.
+    struct Facet: Identifiable, Hashable {
+        let name: String
+        let count: Int
+        var id: String { name }
+    }
+
+    /// Device-derived counts for the sidebar's smart filters. `nil` (rather than all-zero) is
+    /// what lets the sidebar tell "no Kindle connected" apart from "Kindle connected, 0 books".
+    struct PlanCounts: Equatable {
+        var onDevice: Int
+        var notOnDevice: Int
+        var needsConversion: Int
+    }
+
     private(set) var books: [Book] = []
     private(set) var libraryState: LibraryState = .needsSetup
     private(set) var deviceState: DeviceController.State = .disconnected
@@ -49,6 +98,9 @@ final class AppModel {
     /// Precomputed from `plan`. The table asks for a status once per row per redraw, which
     /// was three linear scans over the plan before this existed.
     private(set) var statuses: [Book.ID: BookStatus] = [:]
+    /// Precomputed from `plan`, alongside `statuses`. `nil` while there is no plan, so the
+    /// sidebar can show "unknown" rather than a false zero.
+    private(set) var planCounts: PlanCounts?
     private(set) var syncProgress: SyncProgress?
     private(set) var isCancellingSync = false
     var lastSyncSummary: String?
@@ -57,10 +109,34 @@ final class AppModel {
     /// they already had is untouched — the pick simply did not happen.
     var libraryAlert: String?
 
-    var filter: Filter = .all
+    /// The book being edited in `MetadataEditor`. Lives here rather than as view-local `@State`
+    /// so both the table's context menu and Library ▸ Edit Metadata… drive the same sheet.
+    var editingBook: Book?
+    /// Books queued for the device-removal confirmation dialog; empty means the dialog is
+    /// dismissed. Set directly by `requestRemoval` when confirmation is off.
+    var pendingRemoval: [Book] = []
+    /// Drives `ContentView`'s `.fileImporter`, from both the toolbar's Add button and
+    /// File ▸ Add Books….
+    var isImportingFiles = false
+    /// Bumped to ask the search field to take focus (Edit ▸ Find). A counter rather than a
+    /// bool so two Finds in a row without an intervening blur still refocus.
+    var searchFocusRequests = 0
+
+    var filter: Filter = .all {
+        didSet {
+            guard Preferences.shared.rememberLastFilter else { return }
+            Preferences.shared.lastFilter = filter.storageKey
+        }
+    }
     var search: String = ""
     var selection: Set<Book.ID> = []
     var sortOrder: [KeyPathComparator<Book>] = [KeyPathComparator(\.sort)]
+
+    /// Precomputed from `books` by `rebuildFacets()`, rather than recomputed on every access —
+    /// `authors`/`series`/`tags` used to rebuild a `Set` and sort it once per redraw.
+    private(set) var authorFacets: [Facet] = []
+    private(set) var seriesFacets: [Facet] = []
+    private(set) var tagFacets: [Facet] = []
 
     /// The library currently open, or the one that would be created while `needsSetup` — never
     /// read by the book views in that state, because there are no books to draw.
@@ -84,6 +160,9 @@ final class AppModel {
     /// Identifies the current sync so progress callbacks from an abandoned one cannot
     /// resurrect the progress overlay after it has been cleared.
     private var syncRun = 0
+    /// Set once a backup has run for the current connection, so "back up before first sync"
+    /// backs up once per plug-in rather than before every sync. Reset on detach.
+    private var hasBackedUpThisSession = false
 
     /// `nil` means "resolve it": the remembered library, else calibre's own if it happens to be
     /// there, else nothing at all — which is the welcome screen, and writes nothing until the
@@ -93,6 +172,9 @@ final class AppModel {
         let root = resolved ?? LibraryLocation.suggested
         self.libraryRoot = root
         self.device = DeviceController(libraryRoot: root)
+        if Preferences.shared.rememberLastFilter, let restored = Filter(storageKey: Preferences.shared.lastFilter) {
+            filter = restored
+        }
         if resolved != nil { loadLibrary() }
     }
 
@@ -109,6 +191,7 @@ final class AppModel {
             libraryState = .failed(error.localizedDescription)
             books = []
         }
+        rebuildFacets()
     }
 
     /// Lays down a fresh calibre-format library — the path for someone who has never run calibre.
@@ -156,9 +239,23 @@ final class AppModel {
         }
     }
 
-    var authors: [String] { Array(Set(books.flatMap(\.authors))).sorted() }
-    var series: [String] { Array(Set(books.compactMap(\.series))).sorted() }
-    var tags: [String] { Array(Set(books.flatMap(\.tags))).sorted() }
+    /// Single pass over `books` feeding all three sidebar facet lists, sorted with
+    /// `localizedStandardCompare` so Cyrillic and Latin names interleave sensibly rather than
+    /// by raw codepoint.
+    private func rebuildFacets() {
+        func tally<S: Sequence>(_ keys: (Book) -> S) -> [Facet] where S.Element == String {
+            var counts: [String: Int] = [:]
+            for book in books {
+                for key in keys(book) { counts[key, default: 0] += 1 }
+            }
+            return counts.map { Facet(name: $0.key, count: $0.value) }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+
+        authorFacets = tally(\.authors)
+        seriesFacets = tally { $0.series.map { [$0] } ?? [] }
+        tagFacets = tally(\.tags)
+    }
 
     var filteredBooks: [Book] {
         let sentFilenames = Set((plan?.upToDate ?? []).map(\.id))
@@ -194,6 +291,7 @@ final class AppModel {
         plan = newPlan
         guard let newPlan else {
             statuses = [:]
+            planCounts = nil
             return
         }
         var table: [Book.ID: BookStatus] = [:]
@@ -201,6 +299,11 @@ final class AppModel {
         for item in newPlan.send { table[item.book.id] = item.needsConversion ? .willConvert : .pending }
         for book in newPlan.unsupported { table[book.id] = .unsupported }
         statuses = table
+        planCounts = PlanCounts(
+            onDevice: newPlan.upToDate.count,
+            notOnDevice: newPlan.send.count,
+            needsConversion: newPlan.send.filter(\.needsConversion).count
+        )
     }
 
     func save(_ book: Book) {
@@ -283,6 +386,7 @@ final class AppModel {
                 guard epoch == deviceEpoch else { return }
                 deviceState = .connected(snapshot)
                 await refreshPlan()
+                await autoSyncIfEnabled(epoch: epoch)
                 return
             } catch {
                 guard epoch == deviceEpoch else { return }
@@ -312,6 +416,7 @@ final class AppModel {
     private func handleDetach() async {
         deviceAttached = false
         deviceEpoch += 1
+        hasBackedUpThisSession = false
         mtpDeadline?.cancel()
         mtpDeadline = nil
         connectTask?.cancel()
@@ -335,6 +440,18 @@ final class AppModel {
         return false
     }
 
+    /// Refresh (a Kindle already connected) or connect (one that isn't) — one action for the
+    /// toolbar button and the status popover's retry, which both mean "the user asked, so a
+    /// failure here is a real error" rather than the watcher's quieter `.waitingForMTP`.
+    func refreshOrConnect() async {
+        loadLibrary()
+        if isConnected {
+            await refreshPlan()
+        } else {
+            await connect()
+        }
+    }
+
     /// A connect the user asked for. Unlike the watcher path this reports a real error when
     /// it fails, because someone is waiting on an answer.
     func connect() async {
@@ -346,10 +463,19 @@ final class AppModel {
             guard epoch == deviceEpoch else { return }
             deviceState = .connected(snapshot)
             await refreshPlan()
+            await autoSyncIfEnabled(epoch: epoch)
         } catch {
             guard epoch == deviceEpoch else { return }
             deviceState = .failed(error.localizedDescription)
         }
+    }
+
+    /// Fires a sync right after a connect, when the user has asked for that in Settings ▸ Sync
+    /// and there is actually something to send — an empty plan would just flash the overlay.
+    private func autoSyncIfEnabled(epoch: Int) async {
+        guard epoch == deviceEpoch, Preferences.shared.autoSyncOnConnect else { return }
+        guard let plan, !plan.isEmpty else { return }
+        await sync()
     }
 
     func disconnect() async {
@@ -392,8 +518,31 @@ final class AppModel {
             isCancellingSync = false
         }
 
+        if Preferences.shared.backupBeforeFirstSync, !hasBackedUpThisSession {
+            do {
+                try await device.backupDocuments(to: Preferences.shared.backupDirectory) { [weak self] name, index, total in
+                    Task { @MainActor in
+                        guard let self, self.syncRun == run else { return }
+                        self.syncProgress = SyncProgress(current: "Backing up \(name)", index: index, total: total)
+                    }
+                }
+                guard epoch == deviceEpoch else { return }
+                hasBackedUpThisSession = true
+            } catch {
+                // The whole point of a backup is to have one before writing anything, so a
+                // failure here ends the sync rather than proceeding without it.
+                guard epoch == deviceEpoch else { return }
+                deviceState = .failed(error.localizedDescription)
+                return
+            }
+        }
+
         do {
-            let done = try await device.sync(books: books, shouldStop: { flag.isCancelled }) { [weak self] progress in
+            let done = try await device.sync(
+                books: books,
+                pruneCache: Preferences.shared.pruneCacheAfterSync,
+                shouldStop: { flag.isCancelled }
+            ) { [weak self] progress in
                 Task { @MainActor in
                     // Progress hops are enqueued, not awaited, so one can land after this
                     // run has already finished and strand the overlay. Drop those.
@@ -429,6 +578,56 @@ final class AppModel {
                 ? "Removed from device: \(removed)"
                 : "Those books were not on the device"
             await refreshPlan()
+        } catch {
+            guard epoch == deviceEpoch else { return }
+            deviceState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Queues the device-removal confirmation, or skips straight to it when the user has
+    /// turned that dialog off in Settings ▸ General.
+    func requestRemoval(_ books: [Book]) {
+        guard !books.isEmpty else { return }
+        if Preferences.shared.confirmDeviceRemoval {
+            pendingRemoval = books
+        } else {
+            Task { await removeFromDevice(books) }
+        }
+    }
+
+    /// The current table selection resolved against `books` — what the Library and Device
+    /// menus act on, same as the table's own context menu.
+    var selectedBooks: [Book] {
+        books.filter { selection.contains($0.id) }
+    }
+
+    func revealInFinder(_ books: [Book]) {
+        let urls = books.map { libraryRoot.appending(path: $0.path) }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    /// Pulls documents/ down to `Preferences.shared.backupDirectory`, reported through the same
+    /// overlay a sync uses. Device ▸ Back Up Device… — separate from the "back up before first
+    /// sync" setting, which runs the same call from inside `sync()` instead.
+    func backUpDevice() async {
+        guard isConnected, syncProgress == nil else { return }
+        let epoch = deviceEpoch
+        syncRun += 1
+        let run = syncRun
+        let directory = Preferences.shared.backupDirectory
+        syncProgress = SyncProgress(current: "Preparing…", index: 0, total: 0)
+        defer { syncProgress = nil }
+
+        do {
+            try await device.backupDocuments(to: directory) { [weak self] name, index, total in
+                Task { @MainActor in
+                    guard let self, self.syncRun == run else { return }
+                    self.syncProgress = SyncProgress(current: name, index: index, total: total)
+                }
+            }
+            guard epoch == deviceEpoch else { return }
+            hasBackedUpThisSession = true
+            lastSyncSummary = "Backed up to \(directory.path(percentEncoded: false))"
         } catch {
             guard epoch == deviceEpoch else { return }
             deviceState = .failed(error.localizedDescription)

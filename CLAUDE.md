@@ -9,6 +9,15 @@ Kindle Paperwhite 12 and editing metadata. SwiftPM package, no external dependen
 directly on IOUSBHost, SQLite and zlib come from the SDK. The built `.app` is ~2.9 MB, most of the
 growth over the original 1.7 MB being `Octavo.icns`.
 
+Two icons exist side by side, drawn by sibling scripts from the same sheet/dog-ear geometry:
+`Resources/Octavo.icns` (`make-icon.swift`), which `make-app.sh`'s release build embeds, and
+`Resources/Octavo.icon` (`make-liquid-icon.swift`), a Liquid Glass `.icon` bundle — icon.json plus
+a transparent-background glyph PNG in `Assets/`, editable in Icon Composer.app (ships inside
+Xcode 26) — which only the Tuist-generated `Octavo.xcworkspace` target consumes, via
+`ASSETCATALOG_COMPILER_APPICON_NAME` in `Project.swift`. The plate is not rasterized for the
+`.icon`: its gradient is `fill`/`fill-specializations` in icon.json, and the system renders the
+rounded-square mask, glass material and specular sheen around the one foreground glyph layer.
+
 It operates **in place on the user's real calibre library** at `~/Calibre Library` (42 books) — same
 `metadata.db`, same folder layout, so calibre keeps working alongside it.
 
@@ -31,7 +40,9 @@ swift test --filter convertsEPUB         # one test (regex on the test function 
 OCTAVO_VERSION=1.2 OCTAVO_BUILD=7 ./Scripts/make-app.sh   # what the release workflow does
 open build/Octavo.app
 swift Scripts/make-icon.swift            # redraws Resources/Octavo.icns; only after changing artwork
+swift Scripts/make-liquid-icon.swift     # redraws Resources/Octavo.icon (Liquid Glass); only after changing artwork
 open Package.swift                       # opens the package in Xcode; the Octavo scheme runs, but without a bundle
+tuist generate                           # builds Octavo.xcworkspace from Project.swift: Octavo runs as a real .app (bundle id, Info.plist, Resources/Octavo.icon) + one scheme per test target; gitignored, rerun after Project.swift/Package.swift changes
 ```
 
 CLIs, all of which talk to a connected Kindle:
@@ -75,6 +86,12 @@ Octavo        SwiftUI app (AppModel + DeviceController actor)
 Dependency direction is one-way: `Octavo → SyncEngine → {MTPKit, CalibreLibrary, KindleFormat}`.
 `CalibreLibrary` deliberately knows nothing about ebook formats — the caller reads metadata with
 `KindleFormat` and hands over a `NewBook`.
+
+The toolbar carries no device text. `DeviceStatusButton` (`Views/DeviceStatusButton.swift`) renders
+`DeviceController.State` as one fixed-width, state-tinted glyph; the name/space/error detail that
+used to sit inline in the toolbar lives in its popover instead, so `.failed` vs `.waitingForMTP` is
+now a tint difference (orange vs secondary), not a wording one — `.failed` is still reserved for
+actionable errors, per the rule above.
 
 ### Concurrency
 

@@ -9,6 +9,8 @@ import Foundation
 public enum LibraryLocation {
     static let suiteName = "org.octavo.Octavo"
     static let key = "LibraryRoot"
+    static let recentsKey = "RecentLibraries"
+    static let recentsCap = 8
 
     /// Inside Octavo.app the suite *is* our own domain, and asking for it by name returns nil with
     /// "using your own bundle identifier as a suite name does not make sense" — so ask for it only
@@ -36,9 +38,29 @@ public enum LibraryLocation {
 
     public static func remember(_ url: URL) {
         defaults.set(url.path(percentEncoded: false), forKey: key)
+
+        var paths = defaults.stringArray(forKey: recentsKey) ?? []
+        let path = url.path(percentEncoded: false)
+        paths.removeAll { $0 == path }
+        paths.insert(path, at: 0)
+        defaults.set(Array(paths.prefix(recentsCap)), forKey: recentsKey)
     }
 
     public static func forget() {
         defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: recentsKey)
+    }
+
+    /// Remembered libraries, most recent first, silently dropping any that moved or were
+    /// deleted since — a stale row would otherwise error out `openLibrary(at:)` on click.
+    public static var recents: [URL] {
+        let paths = defaults.stringArray(forKey: recentsKey) ?? []
+        return paths.map { URL(filePath: $0) }.filter { CalibreLibraryStore.isLibrary(at: $0) }
+    }
+
+    /// Drops everything remembered without touching the current `LibraryRoot` — the "Clear
+    /// Menu" action in File ▸ Open Recent.
+    public static func forgetRecents() {
+        defaults.removeObject(forKey: recentsKey)
     }
 }

@@ -43,19 +43,44 @@ public struct SearchResults: Sendable {
 /// FantLab covers Russian fiction well, and Google Books covers both but throttles
 /// anonymous callers — set `GoogleBooksAPIKey` in defaults to get a private quota.
 public struct MetadataFetcher: Sendable {
-    private let session: URLSession
-    private let googleAPIKey: String?
+    /// Which catalogues `search` queries. Settings ▸ Metadata toggles these; disabling one
+    /// skips its network call entirely rather than just discarding the result.
+    public struct Sources: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
 
-    public init(session: URLSession = .shared, googleAPIKey: String? = UserDefaults.standard.string(forKey: "GoogleBooksAPIKey")) {
-        self.session = session
-        self.googleAPIKey = googleAPIKey?.isEmpty == true ? nil : googleAPIKey
+        public static let openLibrary = Sources(rawValue: 1 << 0)
+        public static let fantLab = Sources(rawValue: 1 << 1)
+        public static let googleBooks = Sources(rawValue: 1 << 2)
+        public static let all: Sources = [.openLibrary, .fantLab, .googleBooks]
     }
 
-    /// Searches every source at once. An ISBN match wins, so it goes first when known.
+    private let session: URLSession
+    private let googleAPIKey: String?
+    private let sources: Sources
+
+    public init(
+        session: URLSession = .shared,
+        googleAPIKey: String? = UserDefaults.standard.string(forKey: "GoogleBooksAPIKey"),
+        sources: Sources = .all
+    ) {
+        self.session = session
+        self.googleAPIKey = googleAPIKey?.isEmpty == true ? nil : googleAPIKey
+        self.sources = sources
+    }
+
+    /// Searches every enabled source at once. An ISBN match wins, so it goes first when known.
     public func search(title: String, author: String? = nil, isbn: String? = nil) async -> SearchResults {
-        async let openLibrary = searchOpenLibrary(title: title, author: author, isbn: isbn)
-        async let fantLab = searchFantLab(title: title, author: author)
-        async let google = searchGoogleBooks(title: title, author: author, isbn: isbn)
+        guard !sources.isEmpty else {
+            return SearchResults(notes: ["No metadata sources are enabled — turn one on in Settings ▸ Metadata."])
+        }
+
+        async let openLibrary: SourceOutcome = sources.contains(.openLibrary)
+            ? searchOpenLibrary(title: title, author: author, isbn: isbn) : .success([])
+        async let fantLab: SourceOutcome = sources.contains(.fantLab)
+            ? searchFantLab(title: title, author: author) : .success([])
+        async let google: SourceOutcome = sources.contains(.googleBooks)
+            ? searchGoogleBooks(title: title, author: author, isbn: isbn) : .success([])
 
         var results = SearchResults()
         for source in await [openLibrary, fantLab, google] {

@@ -39,6 +39,43 @@ private func makeSampleFile(_ name: String) throws -> URL {
     #expect(CalibreFunctions.authorSort(of: ["Rid Khastinghs", "Erin Mieiier"]) == "Khastinghs, Rid & Mieiier, Erin")
 }
 
+/// `LibraryLocation.recents` backs the app's File ▸ Open Recent menu. Runs against the real
+/// `org.octavo.Octavo` defaults suite — the same one the app and CLIs share — so it saves and
+/// restores whatever was there rather than leaving test data behind.
+@Test func recentLibrariesCapAtEightAndDropMissingOnes() throws {
+    let defaults = UserDefaults(suiteName: "org.octavo.Octavo")!
+    let savedRecents = defaults.stringArray(forKey: "RecentLibraries")
+    let savedRoot = defaults.string(forKey: "LibraryRoot")
+    defer {
+        if let savedRecents { defaults.set(savedRecents, forKey: "RecentLibraries") }
+        else { defaults.removeObject(forKey: "RecentLibraries") }
+        if let savedRoot { defaults.set(savedRoot, forKey: "LibraryRoot") }
+        else { defaults.removeObject(forKey: "LibraryRoot") }
+    }
+
+    var libraries: [URL] = []
+    for _ in 0..<9 {
+        let url = URL.temporaryDirectory.appending(path: "octavo-recents-\(UUID().uuidString)")
+        try CalibreLibraryStore.create(at: url)
+        libraries.append(url)
+    }
+    defer { for url in libraries { try? FileManager.default.removeItem(at: url) } }
+
+    for url in libraries { LibraryLocation.remember(url) }
+    let paths = libraries.map { $0.path(percentEncoded: false) }
+    let recentPaths = LibraryLocation.recents.map { $0.path(percentEncoded: false) }
+
+    #expect(recentPaths.count == 8)
+    #expect(recentPaths.first == paths.last)   // most recently remembered comes first
+    #expect(!recentPaths.contains(paths[0]))   // the 9th push evicted the oldest
+
+    // A library removed from disk after being remembered drops out silently, rather than
+    // erroring when the menu tries to open it.
+    let victim = libraries.removeLast()
+    try FileManager.default.removeItem(at: victim)
+    #expect(!LibraryLocation.recents.contains(victim))
+}
+
 @Test func readsRealLibrary() throws {
     guard let library = try makeLibraryCopy() else { return }
     defer { try? FileManager.default.removeItem(at: library) }
