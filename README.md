@@ -9,7 +9,7 @@ A 3 MB replacement for the 1 GB calibre, working on the very same library.
 
 [![CI](https://github.com/artemnovichkov/Octavo/actions/workflows/ci.yml/badge.svg)](https://github.com/artemnovichkov/Octavo/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/artemnovichkov/Octavo?include_prereleases)](https://github.com/artemnovichkov/Octavo/releases/latest)
-[![macOS](https://img.shields.io/badge/macOS-15%2B-black?logo=apple)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-26%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
@@ -30,9 +30,9 @@ Metadata editor with live catalogue search:
 
 ![Metadata editor](docs/screenshots/metadata-editor.png)
 
-| Sync state as a filter | Book details |
-|---|---|
-| <img src="docs/screenshots/sidebar-filters.png" width="330" alt="Sidebar filters"> | <img src="docs/screenshots/book-detail.png" width="440" alt="Book detail"> |
+| Authors/series/tags with counts | Book details | Settings ▸ Sync |
+|---|---|---|
+| <img src="docs/screenshots/sidebar-filters.png" width="260" alt="Sidebar filters"> | <img src="docs/screenshots/book-detail.png" width="260" alt="Book detail"> | <img src="docs/screenshots/settings-sync.png" width="330" alt="Settings"> |
 
 ## What it does
 
@@ -49,6 +49,13 @@ Metadata editor with live catalogue search:
   `title-info` in FB2, document attributes in a PDF, the first page of a CBZ as the cover.
 - **Never touches your reading progress** — `.sdr` folders, annotations and highlights are off
   limits by design, not by convention.
+- **Browses by author, series and tag** — the sidebar tallies counts per facet and has its own
+  filter field, on top of the four smart filters (all/on device/not on device/converted).
+- **Has a Settings window** — auto-sync on connect, back up the device before the first sync,
+  prune the conversion cache after each sync, ask (or not) before removing books, pick which
+  metadata catalogues to search, remember the last filter across launches.
+- **Remembers recent libraries** — File ▸ Open Recent, and a full menu bar (Library/Device menus,
+  keyboard shortcuts for every filter, Find, Back Up Device…).
 
 ## Install
 
