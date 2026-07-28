@@ -1,5 +1,6 @@
 import CalibreLibrary
 import Foundation
+import KindleFormat
 import MTPKit
 import SyncEngine
 
@@ -93,8 +94,11 @@ actor DeviceController {
         )
     }
 
-    func plan(books: [Book]) throws -> SyncPlan {
+    /// `target` is read from `Preferences` on the main actor and handed over as a value —
+    /// `Preferences` is `@MainActor` and must never be reached from inside this actor.
+    func plan(books: [Book], target: ConversionTarget) throws -> SyncPlan {
         let engine = try requireEngine()
+        engine.conversionTarget = target
         return try engine.plan(books: books, manifest: engine.loadManifest())
     }
 
@@ -102,11 +106,13 @@ actor DeviceController {
     /// UI can update while the transfer runs.
     func sync(
         books: [Book],
+        target: ConversionTarget,
         pruneCache: Bool = false,
         shouldStop: @Sendable @escaping () -> Bool,
         progress: @Sendable @escaping (SyncEngine.Progress) -> Void
     ) throws -> SyncPlan {
         let engine = try requireEngine()
+        engine.conversionTarget = target
         let manifest = try engine.loadManifest()
         let plan = try engine.plan(books: books, manifest: manifest)
         guard !plan.isEmpty || manifest.adoptedFromCalibre else { return plan }

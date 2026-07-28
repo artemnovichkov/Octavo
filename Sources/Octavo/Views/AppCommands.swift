@@ -55,7 +55,7 @@ struct AppCommands: Commands {
                 .keyboardShortcut("2")
             Button("Not on Device") { model.filter = .notOnDevice }
                 .keyboardShortcut("3")
-            Button("Converted to MOBI") { model.filter = .needsConversion }
+            Button("Converted") { model.filter = .needsConversion }
                 .keyboardShortcut("4")
         }
 

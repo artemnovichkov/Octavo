@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Octavo — a native macOS replacement for calibre (1 GB) whose job is syncing an ebook library to a
 Kindle Paperwhite 12 and editing metadata. SwiftPM package, no external dependencies: MTP is written
-directly on IOUSBHost, SQLite and zlib come from the SDK. The built `.app` is ~2.9 MB, most of the
-growth over the original 1.7 MB being `Octavo.icns`.
+directly on IOUSBHost, SQLite and zlib come from the SDK. The built `.app` is ~3.8 MB: 1.7 MB of it is
+the original binary, then `Octavo.icns`, then the AZW3/KF8 writer.
 
 Two icons exist side by side, drawn by sibling scripts from the same sheet/dog-ear geometry:
 `Resources/Octavo.icns` (`make-icon.swift`), which `make-app.sh`'s release build embeds, and
@@ -54,7 +54,8 @@ CLIs, all of which talk to a connected Kindle:
 .build/debug/octavo-sync                 # dry run: what a sync would do, writes nothing
 .build/debug/octavo-sync --apply         # real sync (pulls a documents/ backup first unless --no-backup)
 .build/debug/octavo-sync --library PATH  # a library other than the resolved one
-.build/debug/octavo-convert book.epub    # conversion alone
+.build/debug/octavo-sync --format mobi   # override Settings ▸ Conversion for one run
+.build/debug/octavo-convert book.epub    # conversion alone (--format azw3|mobi; default is the app's setting)
 ```
 
 **The MTP interface is claimed exclusively.** While Octavo.app runs, every CLI fails with "The MTP
@@ -77,7 +78,7 @@ macOS 15+.
 ```
 MTPKit        PTP/MTP over IOUSBHost: transport, container codec, session, operations, hotplug watcher
 CalibreLibrary  read/write metadata.db in calibre's schema, book import, metadata.opf
-KindleFormat  zip reader, metadata parsers (EPUB/MOBI/FB2/PDF/CBZ), MOBI 6 writer, converters
+KindleFormat  zip reader, metadata parsers (EPUB/MOBI/FB2/PDF/CBZ), AZW3/KF8 + MOBI 6 writers, converters
 MetadataFetch Open Library + FantLab + Google Books
 SyncEngine    library↔device diff, on-device manifest, conversion cache, transfer
 Octavo        SwiftUI app (AppModel + DeviceController actor)
@@ -159,8 +160,49 @@ These cost debugging time; do not rediscover them.
   Kindle treats the book as encrypted, reporting "Unable to open item"), and the NCX index at `0xE4`,
   which must be `0xFFFFFFFF` when absent because `0` points at the header record. The writer
   addresses the header by offset rather than appending sequentially, precisely to prevent shifts.
-- **Firmware 5.19.5 still opens sideloaded MOBI 6**, verified on the device. That is why conversion
-  targets MOBI 6 (one flat HTML stream + image records, no INDX/TAGX/IDXT) instead of KF8/AZW3.
+- **Conversion targets AZW3/KF8 by default; MOBI 6 is a fallback**, chosen in Settings ▸ Conversion
+  or with `--format` on either CLI. MOBI 6 stays because firmware 5.19.5 was verified on the device
+  to open it and it has no index structures to get wrong — but it drops every stylesheet, which is
+  the whole reason AZW3 is the default.
+- **The KF8 format was recovered by decoding calibre's own AZW3 files**, not from documentation, and
+  `Tests/KindleFormatTests/KF8File.swift` is the reader that did it. It is proved against all 30
+  corpus AZW3 files (`KF8CorpusTests`) *before* it is pointed at our own output (`KF8WriterTests`);
+  keep that ordering, because a validator that only agrees with the writer it validates proves
+  nothing. Four things there are not what their names suggest:
+  a chunk index entry's **name is an insert position biased by its skeleton's flow offset**;
+  chunk tag 6's first value counts chunk bytes **within the current section**, resetting at each;
+  calibre writes every skeleton tag **twice** (`[n, n]`, `[start, len, start, len]`) and we write
+  it once, which the control byte makes legal; and INDX varints set the high bit on the **last**
+  byte, the opposite of most varint encodings.
+- **`kindle:pos:fid:XXXX:off:YYYYYYYYYY` links are patched in after chunking**, which is why
+  `KF8Markup` writes a fixed-width placeholder first. Filling it in must not move a single byte or
+  every offset already recorded goes wrong.
+- **Text records are exactly 4096 uncompressed bytes, never fewer.** The reader locates flow
+  offset N by dividing by that size, so a short record drifts every index after it. Octavo did
+  ship records shortened to UTF-8 character boundaries once: a Cyrillic book rendered from the
+  middle of a tag (`div>` visible on screen) and could not be paged, while an ASCII book looked
+  fine. `RecordSizeInvariantTests` runs the same assertions over calibre's files and ours.
+- **The extra-record-data flags live in the low half of the word at `0xE0`, and must agree with
+  what `textRecords` actually appends.** Bit 0 is the multibyte-overlap trailer: when a character
+  straddles the end of a record, that record repeats the *next* record's leading continuation
+  bytes, then a count byte. Bit 1 is a trailing byte sequence, which neither writer emits — TBS
+  feeds the progress machinery, not rendering. Claiming trailers that are absent eats content;
+  omitting the claim for trailers that are present feeds the reader garbage.
+- **MOBI 6 output changed with the AZW3 work and has not been checked on the device since.**
+  It shares `MOBIRecord0`, so the record-size, extra-data-flags and FCIS fixes apply to it too.
+  The new bytes are strictly better formed than what shipped before — the old writer claimed
+  trailers it never wrote — but "better formed" is not "verified". Check it on the Kindle before
+  relying on it as the fallback.
+- **The conversion cache is keyed on the source file only** — uuid, size, mtime. Changing the
+  converter itself invalidates nothing, so a re-sync silently reuses output built by the old code.
+  `rm -rf ~/Library/Caches/Octavo/converted` after touching a writer, or you will test the last
+  build. The same goes for the manifest: an unchanged library file is never re-sent, so forcing a
+  re-send means deleting the file off the device first.
+- **The NCX index stores entries breadth-first by depth, names them in hex, and gives a parent a
+  length spanning its whole subtree** — not reading order, not decimal, not up to its first child.
+  All three came off calibre's files; `NCXStructureTests` holds ours and theirs to the same rules.
+- **`fcisRecord` is 52 bytes.** It was 44 for a long time — two fields short, one constant wrong
+  — which no Mac-side check notices.
 - The device is jailbroken with dead leftovers (`jb.sh`, `patchedUks.sqsh`, `mesquito/`) — the OTA to
   5.19.5 killed the exploit, so KOReader is not an option.
 
@@ -204,5 +246,6 @@ for "does this book actually open".
 
 ## Not implemented yet
 
-PalmDoc compression in the converter (files are ~2× the reference size), TOC/NCX and `filepos`
-internal links in converted books, `.apnx` page numbers.
+Embedded EPUB fonts (dropped, the Kindle substitutes), TBS trailing byte sequences (calibre
+writes them, we do not; navigation works without them),
+`filepos` internal links in MOBI 6 output (AZW3 gets `kindle:pos:` ones), `.apnx` page numbers.

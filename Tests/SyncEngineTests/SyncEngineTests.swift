@@ -1,5 +1,6 @@
 import CalibreLibrary
 import Foundation
+import KindleFormat
 import Testing
 @testable import MTPKit
 @testable import SyncEngine
@@ -89,4 +90,43 @@ private func makeObject(size: UInt64, name: String) -> MTPObject {
     let japanese = SyncEngine.asciiSanitized("日本語")
     #expect(!japanese.isEmpty)
     #expect(japanese.unicodeScalars.allSatisfy { $0.isASCII })
+}
+
+/// Switching the conversion target is the one change none of the staleness signals notice: the
+/// device file is byte-for-byte what we recorded, the library file has not moved, and nothing
+/// was edited. Without this check a book synced as MOBI would stay MOBI forever.
+@Test func retargetIsDetectedFromTheDeviceExtension() {
+    let entry = DeviceManifest.Entry(
+        filename: "riemieslo - sierghiei dovlatov.mobi", deviceSize: 1000,
+        sourceSize: 900, sourceModified: sent, format: "EPUB", sentAt: sent
+    )
+
+    #expect(SyncEngine.needsRetarget(entry: entry, target: .azw3))
+    #expect(!SyncEngine.needsRetarget(entry: entry, target: .mobi))
+    // A book sent as-is is never retargeted, whatever the setting says.
+    #expect(!SyncEngine.needsRetarget(entry: entry, target: nil))
+}
+
+@Test func convertedFilenameCarriesTheTargetExtension() throws {
+    let book = makeBook(formats: [BookFormat(format: "EPUB", name: "Riemieslo", size: 900)])
+    let epub = try #require(book.format("EPUB"))
+
+    #expect(SyncEngine.targetFilename(for: book, format: epub, convertedTo: .azw3).hasSuffix(".azw3"))
+    #expect(SyncEngine.targetFilename(for: book, format: epub, convertedTo: .mobi).hasSuffix(".mobi"))
+    // Not converted: the library format's own extension, unchanged by the setting.
+    #expect(SyncEngine.targetFilename(for: book, format: epub).hasSuffix(".epub"))
+}
+
+/// A retarget must swap the extension and nothing else. calibre transliterates names differently
+/// than Octavo does, and the .sdr sidecar holding reading progress is named after the stem — so
+/// re-deriving the name here would silently strand the user's place in the book.
+@Test func retargetKeepsTheStemSoSidecarsStayMatched() {
+    let calibreName = "Zapovednik - Sergej Dovlatov.mobi"
+    #expect(SyncEngine.retargeted(calibreName, to: .azw3) == "Zapovednik - Sergej Dovlatov.azw3")
+    #expect(SyncEngine.retargeted("Nasi - Sergej Dovlatov.azw3", to: .mobi) == "Nasi - Sergej Dovlatov.mobi")
+
+    // Our own naming for the same book differs, which is exactly why the stem is preserved.
+    let book = makeBook(formats: [BookFormat(format: "EPUB", name: "Zapovednik", size: 900)])
+    let epub = try! #require(book.format("EPUB"))
+    #expect(SyncEngine.targetFilename(for: book, format: epub, convertedTo: .azw3) != calibreName)
 }

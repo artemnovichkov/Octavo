@@ -5,7 +5,7 @@
 # Octavo
 
 **A native macOS app that syncs your ebook library to a Kindle and edits its metadata.**
-A 3 MB replacement for the 1 GB calibre, working on the very same library.
+A 4 MB replacement for the 1 GB calibre, working on the very same library.
 
 [![CI](https://github.com/artemnovichkov/Octavo/actions/workflows/ci.yml/badge.svg)](https://github.com/artemnovichkov/Octavo/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/artemnovichkov/Octavo?include_prereleases)](https://github.com/artemnovichkov/Octavo/releases/latest)
@@ -38,8 +38,8 @@ Metadata editor with live catalogue search:
 
 - **Syncs to the Kindle over MTP** — no cloud, no email-to-Kindle, no Amazon account. Plug the
   cable in and Octavo notices; a diff against the device says what is missing.
-- **Converts what the Kindle cannot read** — EPUB, CBZ, FB2 and TXT become MOBI 6 on the way out,
-  with the result cached.
+- **Converts what the Kindle cannot read** — EPUB, CBZ and FB2 become AZW3 (or MOBI 6, if you
+  prefer) on the way out, with the result cached.
 - **Edits metadata in calibre's own schema** — title, authors, series, publisher, tags, ISBN,
   publication date, description, cover.
 - **Looks metadata up online** — Open Library, FantLab (which is what makes a Cyrillic library
@@ -86,7 +86,7 @@ No external dependencies at all — SwiftPM resolves nothing, everything comes f
 |---|---|
 | `MTPKit` | PTP/MTP written directly on **IOUSBHost**: transport, container codec, session, operations. Hotplug through `IOServiceAddMatchingNotification` as an `AsyncStream`. |
 | `CalibreLibrary` | **SQLite3** from the SDK. calibre's schema triggers call Python functions, so `title_sort()` and `uuid4()` are re-registered via `sqlite3_create_function`. |
-| `KindleFormat` | Own zip reader on **zlib**, metadata parsers for EPUB/MOBI/FB2/PDF/CBZ, and a MOBI 6 writer whose header offsets were recovered by scanning reference files. |
+| `KindleFormat` | Own zip reader on **zlib**, metadata parsers for EPUB/MOBI/FB2/PDF/CBZ, and AZW3/KF8 + MOBI 6 writers whose header offsets, index layouts and PalmDoc coding were recovered by scanning reference files. |
 | `MetadataFetch` | `URLSession` against Open Library, FantLab and Google Books. |
 | `SyncEngine` | Library↔device diff, on-device manifest, conversion cache, transfer. |
 | `Octavo` | **SwiftUI** app: `@MainActor @Observable` model over a `DeviceController` actor. |
@@ -115,7 +115,9 @@ open build/Octavo.app
 .build/debug/octavo-sync                 # dry run: what a sync would do, writes nothing
 .build/debug/octavo-sync --apply         # real sync (pulls a documents/ backup first)
 .build/debug/octavo-sync --library PATH  # a library other than the resolved one
+.build/debug/octavo-sync --format mobi   # override the app's Conversion setting for one run
 .build/debug/octavo-convert book.epub    # conversion alone
+.build/debug/octavo-convert book.epub --format mobi
 ```
 
 The MTP interface is claimed exclusively: while Octavo.app is running every CLI fails with *"The MTP
@@ -145,18 +147,35 @@ transfer, so its copies are a few bytes larger than the original.
 
 ## Conversion
 
-The Kindle opens neither EPUB nor CBZ nor FB2, so those are converted to **MOBI 6** before sending.
-That target was chosen after checking on the device: firmware 5.19.5 still indexes and opens
-sideloaded MOBI, and MOBI 6 needs no INDX/TAGX/IDXT structures — a book is one flat HTML stream plus
-image records.
+The Kindle opens neither EPUB nor CBZ nor FB2, so those are converted before sending. Two targets,
+switchable in Settings ▸ Conversion (and with `--format` on either CLI):
 
-Two header fields cost real debugging time, and both are documented in the writer: the DRM
+- **AZW3 (KF8)**, the default. Keeps the book's stylesheets as separate flows, keeps the spine
+  split into documents, and carries a real NCX index, nesting included — so a converted EPUB
+  arrives styled, with a table of contents the Kindle's own button groups under collapsible
+  headings, and with working internal links.
+- **MOBI 6**, the fallback. One flat HTML stream plus image records, no index structures at all.
+  It loses every stylesheet, but it is the simplest thing the firmware will open, which makes it
+  worth keeping while AZW3 output is still being checked against the device.
+
+Neither target is guesswork: the header offsets, the four INDX/TAGX/CNCX index layouts, the
+skeleton/chunk arrangement and the PalmDoc coding were all recovered by decoding the AZW3 files
+calibre produced for this same library. The test suite parses all 30 of them before it is allowed
+to parse anything Octavo wrote.
+
+Three header fields cost real debugging time, and all three are documented in the writers: the DRM
 offset/count at `0x98`/`0x9C`, where being four bytes off makes the Kindle report *"Unable to open
-item"*, and the NCX index at `0xE4`, which must be `0xFFFFFFFF` when absent because `0` points at
-the header record itself.
+item"*; the NCX index at `0xE4`, which must be `0xFFFFFFFF` when absent because `0` points at the
+header record itself; and the extra-record-data flags in the low half of `0xE0`, which have to
+agree exactly with the trailers each text record actually carries. Text records are always 4096
+uncompressed bytes; shortening them to land on character boundaries silently breaks every index
+in the file, and only shows up on a book that is not pure ASCII.
 
 Results are cached in `~/Library/Caches/Octavo/converted`, keyed by source size and mtime, so
-editing a book invalidates its own cache entry.
+editing a book invalidates its own cache entry. The target format is the file extension, so the two
+do not collide and switching back and forth does not throw the cache away. Note that the key folds
+in the *source* only: changing Octavo's own converter does not invalidate anything, so clear the
+cache after one.
 
 ## Metadata sources
 
@@ -172,9 +191,8 @@ suite, so the CLIs and the app always agree on it.
 
 ## Not implemented yet
 
-- PalmDoc compression in the converter — text is written uncompressed, so files are larger than
-  calibre's.
-- A table of contents (NCX) and `filepos` internal links in converted books.
+- Embedded fonts from EPUB — dropped rather than carried as KF8 resources; the Kindle substitutes.
+- `filepos` internal links in MOBI 6 output. AZW3 gets `kindle:pos:` links; MOBI 6 does not.
 - `.apnx` page numbers.
 
 Implementation notes, hard-won constraints and the reasoning behind the architecture live in

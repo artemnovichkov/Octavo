@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KindleFormat
 import SwiftUI
 import SyncEngine
 
@@ -102,6 +103,7 @@ private struct SyncSettingsTab: View {
 }
 
 private struct ConversionSettingsTab: View {
+    @Environment(AppModel.self) private var model
     private var preferences = Preferences.shared
     @State private var cacheSize: Int64?
     @State private var isClearing = false
@@ -110,6 +112,23 @@ private struct ConversionSettingsTab: View {
         @Bindable var preferences = preferences
 
         Form {
+            Section {
+                Picker("Convert to", selection: $preferences.conversionTarget) {
+                    ForEach(ConversionTarget.allCases, id: \.self) { target in
+                        Text(target.displayName).tag(target)
+                    }
+                }
+            } footer: {
+                Text("AZW3 keeps the book's stylesheets and table of contents; MOBI 6 is the older, simpler format. Changing this re-converts and re-sends every converted book on the next sync.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            // Without this the sidebar counts and the per-book statuses would keep describing
+            // the format that was selected when the plan was made.
+            .onChange(of: preferences.conversionTarget) {
+                Task { await model.refreshPlan() }
+            }
+
             LabeledContent("Cache location") {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(ConversionCache.default.directory.path(percentEncoded: false))

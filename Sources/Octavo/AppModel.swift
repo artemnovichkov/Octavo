@@ -23,7 +23,7 @@ final class AppModel {
             case .all: return "All books"
             case .onDevice: return "On device"
             case .notOnDevice: return "Not on device"
-            case .needsConversion: return "Converted to MOBI"
+            case .needsConversion: return "Converted"
             case .author(let name), .series(let name), .tag(let name): return name
             }
         }
@@ -486,7 +486,7 @@ final class AppModel {
         guard isConnected else { return }
         let epoch = deviceEpoch
         do {
-            let fresh = try await device.plan(books: books)
+            let fresh = try await device.plan(books: books, target: Preferences.shared.conversionTarget)
             guard epoch == deviceEpoch else { return }
             setPlan(fresh)
         } catch {
@@ -540,6 +540,7 @@ final class AppModel {
         do {
             let done = try await device.sync(
                 books: books,
+                target: Preferences.shared.conversionTarget,
                 pruneCache: Preferences.shared.pruneCacheAfterSync,
                 shouldStop: { flag.isCancelled }
             ) { [weak self] progress in
@@ -656,7 +657,7 @@ enum BookStatus {
         switch self {
         case .synced: return "On device"
         case .pending: return "Will be sent"
-        case .willConvert: return "Will be converted to MOBI and sent"
+        case .willConvert: return "Will be converted and sent"
         case .unsupported: return "The Kindle cannot open this format and it cannot be converted"
         case .unknown: return "Device not connected"
         }
