@@ -70,10 +70,20 @@ enum KF8Indices {
         var position: Int
         var chunk: Int
         var offset: Int
+        /// 0 for a top-level entry, 1 for its children, and so on.
+        var depth: Int
     }
 
-    /// The index behind the Kindle's own table-of-contents button. Flat: every entry is at
-    /// depth 0, so the parent/first-child/last-child tags are simply absent.
+    /// The index behind the Kindle's own table-of-contents button, nesting included — the
+    /// Kindle renders a nested one under collapsible headings.
+    ///
+    /// Three conventions here were read off calibre's files and none is guessable:
+    ///
+    /// - Entries are stored **breadth-first**: every depth-0 entry, then every depth-1 entry,
+    ///   with one parent's children contiguous. Reading order is carried by the positions.
+    /// - Entry names are **hex**, two digits and up (`0A`, `13`, `66`), not decimal.
+    /// - A parent's length spans its **whole subtree**, reaching to the next entry at the same
+    ///   or a shallower depth — not to its first child.
     static func ncx(_ targets: [TOCTarget], textLength: Int) -> [Data] {
         let tagx = [
             INDXWriter.TagDefinition(tag: 1, valuesPerEntry: 1, mask: 0x01),  // position
@@ -86,22 +96,58 @@ enum KF8Indices {
             INDXWriter.TagDefinition(tag: 6, valuesPerEntry: 2, mask: 0x80),  // chunk, offset
         ]
 
-        let labels = targets.map(\.title)
+        // Reading order first: lengths and parentage are both defined in terms of it.
+        let reading = targets
+
+        // An entry ends where the next entry at the same or a shallower depth begins, so a
+        // section covers its chapters and the last chapter covers the rest of the section.
+        func end(of index: Int) -> Int {
+            for next in (index + 1)..<reading.count where reading[next].depth <= reading[index].depth {
+                return reading[next].position
+            }
+            return textLength
+        }
+
+        // Parent is the nearest preceding entry one level up.
+        var parentOf = [Int?](repeating: nil, count: reading.count)
+        for index in reading.indices where reading[index].depth > 0 {
+            for previous in stride(from: index - 1, through: 0, by: -1)
+            where reading[previous].depth == reading[index].depth - 1 {
+                parentOf[index] = previous
+                break
+            }
+        }
+
+        // Breadth-first storage order, and the map from reading order to stored ordinal.
+        let stored = reading.indices.sorted {
+            reading[$0].depth != reading[$1].depth ? reading[$0].depth < reading[$1].depth : $0 < $1
+        }
+        var ordinalOf = [Int](repeating: 0, count: reading.count)
+        for (ordinal, index) in stored.enumerated() { ordinalOf[index] = ordinal }
+
+        var children = [[Int]](repeating: [], count: reading.count)
+        for index in reading.indices {
+            if let parent = parentOf[index] { children[parent].append(ordinalOf[index]) }
+        }
+
+        let labels = stored.map { reading[$0].title }
         let offsets = INDXWriter.stringOffsets(labels)
 
-        let entries = targets.enumerated().map { index, target in
-            // An entry runs until the next one starts; the last runs to the end of the text.
-            let next = index + 1 < targets.count ? targets[index + 1].position : textLength
-            return INDXWriter.Entry(
-                name: String(format: "%02d", index),
-                values: [
-                    1: [target.position],
-                    2: [max(0, next - target.position)],
-                    3: [offsets[index]],
-                    4: [0],
-                    6: [target.chunk, target.offset],
-                ]
-            )
+        let entries = stored.enumerated().map { ordinal, index in
+            let target = reading[index]
+            var values: [UInt8: [Int]] = [
+                1: [target.position],
+                2: [max(0, end(of: index) - target.position)],
+                3: [offsets[ordinal]],
+                4: [target.depth],
+                6: [target.chunk, target.offset],
+            ]
+            if let parent = parentOf[index] { values[21] = [ordinalOf[parent]] }
+            if let first = children[index].min(), let last = children[index].max() {
+                values[22] = [first]
+                values[23] = [last]
+            }
+            return INDXWriter.Entry(name: String(format: "%02X", ordinal), values: values)
         }
 
         return INDXWriter.records(entries: entries, tagx: tagx, strings: labels)

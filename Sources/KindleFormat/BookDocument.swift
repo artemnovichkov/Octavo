@@ -52,11 +52,15 @@ public struct BookDocument {
         public var sectionIndex: Int
         /// The `id` the entry points at inside its section, if it points at one.
         public var anchor: String?
+        /// 0 for a top-level entry, 1 for its children. Entries stay in reading order; the
+        /// depths are what describe the tree.
+        public var depth: Int
 
-        public init(title: String, sectionIndex: Int, anchor: String? = nil) {
+        public init(title: String, sectionIndex: Int, anchor: String? = nil, depth: Int = 0) {
             self.title = title
             self.sectionIndex = sectionIndex
             self.anchor = anchor
+            self.depth = depth
         }
     }
 

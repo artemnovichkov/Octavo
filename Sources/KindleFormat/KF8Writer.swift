@@ -174,10 +174,10 @@ public enum KF8Writer {
                 title: entry.title,
                 position: position(of: found, in: layout),
                 chunk: found.chunk,
-                offset: found.offset
+                offset: found.offset,
+                depth: entry.depth
             )
         }
-        .sorted { $0.position < $1.position }
     }
 
     // MARK: - Generated contents page

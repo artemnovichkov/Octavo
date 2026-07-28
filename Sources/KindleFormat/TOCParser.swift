@@ -5,14 +5,16 @@ import Foundation
 /// readers, so the NCX is tried first — it is plain XML, where a nav document is XHTML and only
 /// usually well-formed.
 ///
-/// The result is deliberately flat. A KF8 NCX index can express a hierarchy, but a flat one is
-/// valid and is what the Kindle's TOC button needs; nesting can come later without changing
-/// anything here but the parser.
+/// Nesting is preserved: the Kindle groups a nested table of contents under collapsible
+/// headings, and flattening one turns four sections and sixteen chapters into twenty
+/// undifferentiated lines.
 enum TOCParser {
     struct Item {
         /// `href` relative to the file the TOC was read from, fragment included.
         var href: String
         var title: String
+        /// 0 for a top-level entry, 1 for its children, and so on.
+        var depth: Int
     }
 
     static func parse(ncx data: Data) -> [Item] {
@@ -31,6 +33,8 @@ private final class NCXParser: NSObject, XMLParserDelegate {
     private var text = ""
     private var pendingTitle: String?
     private var inLabel = false
+    /// navPoints nest, and how deeply is exactly what the NCX index needs.
+    private var depth = 0
 
     func parse(_ data: Data) -> [TOCParser.Item] {
         let parser = XMLParser(data: data)
@@ -48,6 +52,8 @@ private final class NCXParser: NSObject, XMLParserDelegate {
         attributes: [String: String] = [:]
     ) {
         switch elementName.lowercased() {
+        case "navpoint":
+            depth += 1
         case "navlabel":
             inLabel = true
             text = ""
@@ -56,7 +62,7 @@ private final class NCXParser: NSObject, XMLParserDelegate {
         case "content":
             // The label always precedes the content element inside a navPoint.
             if let src = attributes["src"], let title = pendingTitle, !title.isEmpty {
-                items.append(TOCParser.Item(href: src, title: title))
+                items.append(TOCParser.Item(href: src, title: title, depth: max(0, depth - 1)))
             }
             pendingTitle = nil
         default:
@@ -74,9 +80,14 @@ private final class NCXParser: NSObject, XMLParserDelegate {
         namespaceURI: String?,
         qualifiedName: String?
     ) {
-        if elementName.lowercased() == "navlabel" {
+        switch elementName.lowercased() {
+        case "navlabel":
             inLabel = false
             pendingTitle = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        case "navpoint":
+            depth = max(0, depth - 1)
+        default:
+            break
         }
     }
 }
@@ -88,6 +99,8 @@ private final class NavParser: NSObject, XMLParserDelegate {
     private var inTOC = false
     private var currentHref: String?
     private var text = ""
+    /// An EPUB 3 nav document nests with <ol>, not with the anchors themselves.
+    private var listDepth = 0
 
     func parse(_ data: Data) -> [TOCParser.Item] {
         let parser = XMLParser(data: data)
@@ -113,6 +126,8 @@ private final class NavParser: NSObject, XMLParserDelegate {
                 navDepth = 0
             }
             if inTOC { navDepth += 1 }
+        case "ol" where inTOC:
+            listDepth += 1
         case "a" where inTOC:
             currentHref = attributes["href"]
             text = ""
@@ -134,11 +149,15 @@ private final class NavParser: NSObject, XMLParserDelegate {
         switch elementName.lowercased() {
         case "nav" where inTOC:
             navDepth -= 1
-            if navDepth <= 0 { inTOC = false }
+            if navDepth <= 0 { inTOC = false; listDepth = 0 }
+        case "ol" where inTOC:
+            listDepth = max(0, listDepth - 1)
         case "a":
             if let href = currentHref {
                 let title = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty { items.append(TOCParser.Item(href: href, title: title)) }
+                if !title.isEmpty {
+                    items.append(TOCParser.Item(href: href, title: title, depth: max(0, listDepth - 1)))
+                }
             }
             currentHref = nil
         default:

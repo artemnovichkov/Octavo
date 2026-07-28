@@ -168,13 +168,10 @@ import Testing
             #expect(ncx.strings.count == ncx.entries.count, "\(name): подписи не сошлись с записями")
 
             let chunks = try file.index(at: file.chunkIndex)
-            var previous = -1
             for entry in ncx.entries {
                 guard let position = entry.tags[1]?.first,
                       let geometry = entry.tags[6], geometry.count >= 2
                 else { Issue.record("\(name): запись NCX без позиции"); continue }
-                #expect(position > previous, "\(name): позиции NCX должны расти")
-                previous = position
                 #expect(geometry[0] < chunks.entries.count, "\(name): NCX ссылается на несуществующий кусок")
                 // Tag 1 must agree with tag 6: the reading position is the chunk's insert
                 // position plus the offset inside it.

@@ -170,7 +170,9 @@ public enum Converter {
             let parts = item.href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
             guard let index = sectionIndex(String(parts[0])) else { return nil }
             let anchor = parts.count > 1 ? String(parts[1]) : nil
-            return BookDocument.TOCEntry(title: item.title, sectionIndex: index, anchor: anchor)
+            return BookDocument.TOCEntry(
+                title: item.title, sectionIndex: index, anchor: anchor, depth: item.depth
+            )
         }
     }
 

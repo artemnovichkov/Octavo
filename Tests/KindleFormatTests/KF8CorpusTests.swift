@@ -165,3 +165,89 @@ import Testing
         }
     }
 }
+
+/// The NCX tree, checked the same way the record-size invariant is: one set of rules applied to
+/// calibre's files and to ours, so neither can drift into a private convention.
+///
+/// The conventions are not guessable and were read off calibre's output — entries stored
+/// breadth-first by depth, hex names, and a parent's length spanning its whole subtree rather
+/// than stopping at its first child.
+@Suite struct NCXStructureTests {
+    private func check(_ file: KF8File, _ name: String) throws {
+        guard file.ncxIndex < file.recordCount else { return }
+        let ncx = try file.index(at: file.ncxIndex)
+        guard !ncx.entries.isEmpty else { return }
+
+        let depths = ncx.entries.map { $0.tags[4]?.first ?? 0 }
+        let positions = ncx.entries.map { $0.tags[1]?.first ?? 0 }
+        let lengths = ncx.entries.map { $0.tags[2]?.first ?? 0 }
+
+        // Stored breadth-first: depths never decrease as you walk the entries.
+        #expect(zip(depths, depths.dropFirst()).allSatisfy { $0 <= $1 }, "\(name): записи не по уровням")
+
+        // Names are hex ordinals.
+        for (ordinal, entry) in ncx.entries.enumerated() {
+            #expect(Int(entry.name, radix: 16) == ordinal, "\(name): имя \(entry.name) не hex-порядковый")
+        }
+
+        // Within one depth, reading order is preserved.
+        for depth in Set(depths) {
+            let atDepth = ncx.entries.indices.filter { depths[$0] == depth }.map { positions[$0] }
+            #expect(zip(atDepth, atDepth.dropFirst()).allSatisfy { $0 < $1 }, "\(name): позиции уровня \(depth) не растут")
+        }
+
+        for (ordinal, entry) in ncx.entries.enumerated() {
+            // A child names its parent, and sits inside the parent's span.
+            if depths[ordinal] > 0 {
+                guard let parent = entry.tags[21]?.first else {
+                    Issue.record("\(name): у вложенной записи \(entry.name) нет родителя")
+                    continue
+                }
+                #expect(parent < ncx.entries.count, "\(name)")
+                #expect(depths[parent] == depths[ordinal] - 1, "\(name): родитель не на уровень выше")
+                #expect(
+                    positions[ordinal] >= positions[parent]
+                        && positions[ordinal] < positions[parent] + lengths[parent],
+                    "\(name): запись \(entry.name) вне диапазона родителя"
+                )
+            } else {
+                #expect(entry.tags[21] == nil, "\(name): у записи верхнего уровня есть родитель")
+            }
+
+            // A parent's declared child range has to be exactly the entries claiming it.
+            if let first = entry.tags[22]?.first, let last = entry.tags[23]?.first {
+                #expect(first <= last, "\(name)")
+                let claimed = ncx.entries.indices.filter { ncx.entries[$0].tags[21]?.first == ordinal }
+                #expect(claimed.min() == first && claimed.max() == last, "\(name): диапазон детей не сходится")
+            }
+        }
+    }
+
+    @Test func calibreNCXTreesHoldTheRules() throws {
+        let urls = corpusFiles(withExtension: "azw3")
+        guard !urls.isEmpty else { return }
+        var nested = 0
+        for url in urls {
+            let file = try KF8File(url: url)
+            try check(file, url.lastPathComponent)
+            if file.ncxIndex < file.recordCount,
+               try file.index(at: file.ncxIndex).entries.contains(where: { ($0.tags[4]?.first ?? 0) > 0 }) {
+                nested += 1
+            }
+        }
+        #expect(nested > 0, "в корпусе не нашлось вложенных оглавлений — правила не проверены")
+    }
+
+    @Test func ourNCXTreesHoldTheRules() throws {
+        let urls = corpusFiles(withExtension: "epub")
+        guard !urls.isEmpty else { return }
+        var nested = 0
+        for url in urls {
+            let document = try Converter.readEPUB(url)
+            guard document.toc.contains(where: { $0.depth > 0 }) else { continue }
+            nested += 1
+            try check(try KF8File(data: KF8Writer.write(document)), url.lastPathComponent)
+        }
+        #expect(nested > 0, "в корпусе не нашлось EPUB с вложенным оглавлением")
+    }
+}

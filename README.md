@@ -151,8 +151,9 @@ The Kindle opens neither EPUB nor CBZ nor FB2, so those are converted before sen
 switchable in Settings ▸ Conversion (and with `--format` on either CLI):
 
 - **AZW3 (KF8)**, the default. Keeps the book's stylesheets as separate flows, keeps the spine
-  split into documents, and carries a real NCX index — so a converted EPUB arrives styled, with a
-  table of contents the Kindle's own button can use, and with working internal links.
+  split into documents, and carries a real NCX index, nesting included — so a converted EPUB
+  arrives styled, with a table of contents the Kindle's own button groups under collapsible
+  headings, and with working internal links.
 - **MOBI 6**, the fallback. One flat HTML stream plus image records, no index structures at all.
   It loses every stylesheet, but it is the simplest thing the firmware will open, which makes it
   worth keeping while AZW3 output is still being checked against the device.
@@ -172,7 +173,9 @@ in the file, and only shows up on a book that is not pure ASCII.
 
 Results are cached in `~/Library/Caches/Octavo/converted`, keyed by source size and mtime, so
 editing a book invalidates its own cache entry. The target format is the file extension, so the two
-do not collide and switching back and forth does not throw the cache away.
+do not collide and switching back and forth does not throw the cache away. Note that the key folds
+in the *source* only: changing Octavo's own converter does not invalidate anything, so clear the
+cache after one.
 
 ## Metadata sources
 
@@ -189,7 +192,6 @@ suite, so the CLIs and the app always agree on it.
 ## Not implemented yet
 
 - Embedded fonts from EPUB — dropped rather than carried as KF8 resources; the Kindle substitutes.
-- A nested table of contents. The NCX index is written flat, at one level.
 - `filepos` internal links in MOBI 6 output. AZW3 gets `kindle:pos:` links; MOBI 6 does not.
 - `.apnx` page numbers.
 

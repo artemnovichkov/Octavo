@@ -193,6 +193,14 @@ These cost debugging time; do not rediscover them.
   The new bytes are strictly better formed than what shipped before — the old writer claimed
   trailers it never wrote — but "better formed" is not "verified". Check it on the Kindle before
   relying on it as the fallback.
+- **The conversion cache is keyed on the source file only** — uuid, size, mtime. Changing the
+  converter itself invalidates nothing, so a re-sync silently reuses output built by the old code.
+  `rm -rf ~/Library/Caches/Octavo/converted` after touching a writer, or you will test the last
+  build. The same goes for the manifest: an unchanged library file is never re-sent, so forcing a
+  re-send means deleting the file off the device first.
+- **The NCX index stores entries breadth-first by depth, names them in hex, and gives a parent a
+  length spanning its whole subtree** — not reading order, not decimal, not up to its first child.
+  All three came off calibre's files; `NCXStructureTests` holds ours and theirs to the same rules.
 - **`fcisRecord` is 52 bytes.** It was 44 for a long time — two fields short, one constant wrong
   — which no Mac-side check notices.
 - The device is jailbroken with dead leftovers (`jb.sh`, `patchedUks.sqsh`, `mesquito/`) — the OTA to
@@ -238,5 +246,6 @@ for "does this book actually open".
 
 ## Not implemented yet
 
-Embedded EPUB fonts (dropped, the Kindle substitutes), nested NCX (the index is written flat),
+Embedded EPUB fonts (dropped, the Kindle substitutes), TBS trailing byte sequences (calibre
+writes them, we do not; navigation works without them),
 `filepos` internal links in MOBI 6 output (AZW3 gets `kindle:pos:` ones), `.apnx` page numbers.
