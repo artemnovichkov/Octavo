@@ -1,6 +1,11 @@
 import Foundation
 
-/// Turns formats the Kindle cannot open into a MOBI it can.
+/// Turns formats the Kindle cannot open into one it can.
+///
+/// Reading and writing are kept apart: each source format is read into a `BookDocument`, and
+/// each target format is written from one. That is what lets AZW3 keep the spine and the
+/// stylesheets — which MOBI 6 has nowhere to put — without the EPUB reader knowing either
+/// format exists.
 public enum Converter {
     public enum ConversionError: Error, LocalizedError {
         case unsupported(String)
@@ -22,25 +27,37 @@ public enum Converter {
 
     /// Converts and writes the result next to the requested destination.
     @discardableResult
-    public static func convert(_ source: URL, to destination: URL) throws -> URL {
-        let data: Data
+    public static func convert(
+        _ source: URL,
+        to destination: URL,
+        target: ConversionTarget = .default
+    ) throws -> URL {
+        let document = try read(source)
+        try write(document, to: destination, target: target)
+        return destination
+    }
+
+    static func read(_ source: URL) throws -> BookDocument {
         switch source.pathExtension.lowercased() {
-        case "epub":
-            data = try convertEPUB(source)
-        case "cbz":
-            data = try convertComic(source)
-        case "fb2":
-            data = try convertFB2(source)
-        default:
-            throw ConversionError.unsupported(source.pathExtension)
+        case "epub": return try readEPUB(source)
+        case "cbz": return try readComic(source)
+        case "fb2": return try readFB2(source)
+        default: throw ConversionError.unsupported(source.pathExtension)
+        }
+    }
+
+    static func write(_ document: BookDocument, to destination: URL, target: ConversionTarget) throws {
+        guard !document.isEmpty else { throw ConversionError.emptyBook }
+        let data = switch target {
+        case .azw3: KF8Writer.write(document)
+        case .mobi: MOBIWriter.write(document)
         }
         try data.write(to: destination, options: .atomic)
-        return destination
     }
 
     // MARK: - EPUB
 
-    static func convertEPUB(_ url: URL) throws -> Data {
+    static func readEPUB(_ url: URL) throws -> BookDocument {
         let archive = try ZipArchive(url: url)
         guard let containerData = try archive.contents(of: "META-INF/container.xml"),
               let opfPath = EPUBReader.rootfilePath(in: containerData),
@@ -48,94 +65,150 @@ public enum Converter {
         else { throw EPUBReader.EPUBError.noContainer }
 
         let parser = OPFParser(fallbackTitle: url.deletingPathExtension().lastPathComponent)
-        let metadata = parser.parse(opfData)
+        var document = BookDocument(metadata: parser.parse(opfData))
         let base = (opfPath as NSString).deletingLastPathComponent
 
-        func resolve(_ href: String) -> String {
-            let raw = base.isEmpty ? href : "\(base)/\(href)"
-            return EPUBReader.normalize(raw.removingPercentEncoding ?? raw)
+        func resolve(_ href: String, from directory: String) -> String {
+            let joined = directory.isEmpty ? href : "\(directory)/\(href)"
+            let normalized = EPUBReader.normalize(joined)
+            return normalized.removingPercentEncoding ?? normalized
         }
 
-        var images: [Data] = []
-        var imageIndexByPath: [String: Int] = [:]
-
-        func imageIndex(for path: String) -> Int? {
-            if let existing = imageIndexByPath[path] { return existing }
+        var resourceIndexByPath: [String: Int] = [:]
+        func resourceIndex(for path: String) -> Int? {
+            if let existing = resourceIndexByPath[path] { return existing }
             guard let data = try? archive.contents(of: path), !data.isEmpty else { return nil }
-            images.append(data)
-            imageIndexByPath[path] = images.count
-            return images.count
+            document.resources.append(data)
+            resourceIndexByPath[path] = document.resources.count - 1
+            return document.resources.count - 1
         }
 
-        // The cover goes first so EXTH 201 can address it as image 0.
-        var coverIndex: Int?
-        if let coverHref = parser.coverHref, let index = imageIndex(for: resolve(coverHref)) {
-            coverIndex = index - 1
+        // The cover is pulled first so it lands at resource 0, which is what EXTH 201 records.
+        if let coverHref = parser.coverHref {
+            document.coverResourceIndex = resourceIndex(for: resolve(coverHref, from: base))
         }
 
-        var html = ""
+        var stylesheetIndexByPath: [String: Int] = [:]
+        func stylesheetIndex(for path: String) -> Int? {
+            if let existing = stylesheetIndexByPath[path] { return existing }
+            guard let data = try? archive.contents(of: path), !data.isEmpty else { return nil }
+            document.stylesheets.append(String(decoding: data, as: UTF8.self))
+            stylesheetIndexByPath[path] = document.stylesheets.count - 1
+            return document.stylesheets.count - 1
+        }
+
+        var sectionIndexByPath: [String: Int] = [:]
         for href in parser.spineHrefs {
-            let path = resolve(href)
+            let path = resolve(href, from: base)
             guard let data = try? archive.contents(of: path) else { continue }
-            let document = String(decoding: data, as: UTF8.self)
-            let bodyHTML = HTMLFlattener.body(of: document)
-            let documentBase = (path as NSString).deletingLastPathComponent
+            let directory = (path as NSString).deletingLastPathComponent
+            let xhtml = String(decoding: data, as: UTF8.self)
 
-            let rewritten = HTMLFlattener.rewriteImages(in: bodyHTML) { src in
-                let resolved = EPUBReader.normalize(
-                    documentBase.isEmpty ? src : "\(documentBase)/\(src)"
-                )
-                return imageIndex(for: resolved.removingPercentEncoding ?? resolved)
+            var section = BookDocument.Section(path: path, xhtml: xhtml)
+            // Keyed by the attribute value verbatim: a writer rewrites what it finds in the
+            // markup, and should never have to redo path resolution to know what it maps to.
+            for src in Markup.attributeValues(in: xhtml, tag: "img", attribute: "src")
+                + Markup.attributeValues(in: xhtml, tag: "image", attribute: "xlink:href")
+            {
+                if let index = resourceIndex(for: resolve(src, from: directory)) {
+                    section.resources[src] = index
+                }
             }
-            if !html.isEmpty { html += "<mbp:pagebreak/>" }
-            html += rewritten
+            for href in Markup.attributeValues(in: xhtml, tag: "link", attribute: "href") {
+                guard href.lowercased().hasSuffix(".css") else { continue }
+                if let index = stylesheetIndex(for: resolve(href, from: directory)) {
+                    section.stylesheets.append(index)
+                }
+            }
+
+            sectionIndexByPath[path] = document.sections.count
+            document.sections.append(section)
         }
 
-        guard !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ConversionError.emptyBook
+        // Links are resolved in a second pass: a section can point at one that follows it, so
+        // the whole spine has to be indexed first.
+        for index in document.sections.indices {
+            let directory = (document.sections[index].path as NSString).deletingLastPathComponent
+            for href in Markup.attributeValues(in: document.sections[index].xhtml, tag: "a", attribute: "href") {
+                let parts = href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+                let anchor = parts.count > 1 ? String(parts[1]) : nil
+                let file = String(parts[0])
+                // An empty file part is a link inside this very section.
+                guard let target = file.isEmpty
+                    ? index
+                    : sectionIndexByPath[resolve(file, from: directory)]
+                else { continue }
+                document.sections[index].links[href] = BookDocument.LinkTarget(section: target, anchor: anchor)
+            }
         }
 
-        return MOBIWriter.write(MOBIWriter.Input(
-            html: html,
-            images: images,
-            metadata: metadata,
-            coverIndex: coverIndex
-        ))
+        document.toc = readTOC(archive: archive, parser: parser, base: base) { href in
+            sectionIndexByPath[resolve(href, from: base)]
+        }
+        return document
+    }
+
+    /// NCX first, then the EPUB 3 navigation document: most EPUB 3 files ship both, and the NCX
+    /// is real XML where a nav document only usually is.
+    private static func readTOC(
+        archive: ZipArchive,
+        parser: OPFParser,
+        base: String,
+        sectionIndex: (String) -> Int?
+    ) -> [BookDocument.TOCEntry] {
+        var items: [TOCParser.Item] = []
+        if let ncxHref = parser.ncxHref,
+           let data = try? archive.contents(of: EPUBReader.normalize(base.isEmpty ? ncxHref : "\(base)/\(ncxHref)")) {
+            items = TOCParser.parse(ncx: data)
+        }
+        if items.isEmpty, let navHref = parser.navHref,
+           let data = try? archive.contents(of: EPUBReader.normalize(base.isEmpty ? navHref : "\(base)/\(navHref)")) {
+            items = TOCParser.parse(nav: data)
+        }
+
+        return items.compactMap { item in
+            let parts = item.href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+            guard let index = sectionIndex(String(parts[0])) else { return nil }
+            let anchor = parts.count > 1 ? String(parts[1]) : nil
+            return BookDocument.TOCEntry(title: item.title, sectionIndex: index, anchor: anchor)
+        }
     }
 
     // MARK: - CBZ
 
-    static func convertComic(_ url: URL) throws -> Data {
+    static func readComic(_ url: URL) throws -> BookDocument {
         let archive = try ZipArchive(url: url)
         let pages = archive.entries
             .filter { ["jpg", "jpeg", "png", "gif"].contains(($0.path as NSString).pathExtension.lowercased()) }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
         guard !pages.isEmpty else { throw ConversionError.emptyBook }
 
-        var images: [Data] = []
-        var html = ""
-        for (index, page) in pages.enumerated() {
+        var document = BookDocument(
+            metadata: EbookMetadata(title: url.deletingPathExtension().lastPathComponent)
+        )
+
+        // One section per page: MOBI 6 joins them back into one stream, KF8 gets a skeleton
+        // each, which is the natural unit for a comic anyway.
+        for page in pages {
             guard let data = try? archive.contents(of: page), !data.isEmpty else { continue }
-            images.append(data)
-            if index > 0 { html += "<mbp:pagebreak/>" }
-            html += "<div align=\"center\"><img recindex=\"\(String(format: "%05d", images.count))\"/></div>"
+            document.resources.append(data)
+            let index = document.resources.count - 1
+            document.sections.append(BookDocument.Section(
+                path: page.path,
+                xhtml: "<html><body><div align=\"center\"><img src=\"\(page.path)\"/></div></body></html>",
+                resources: [page.path: index]
+            ))
         }
-        guard !images.isEmpty else { throw ConversionError.emptyBook }
+        guard !document.resources.isEmpty else { throw ConversionError.emptyBook }
 
-        var metadata = EbookMetadata(title: url.deletingPathExtension().lastPathComponent)
-        metadata.cover = images.first
-
-        return MOBIWriter.write(MOBIWriter.Input(
-            html: html,
-            images: images,
-            metadata: metadata,
-            coverIndex: 0
-        ))
+        document.coverResourceIndex = 0
+        document.metadata.cover = document.resources.first
+        return document
     }
 
     // MARK: - FB2
 
-    static func convertFB2(_ url: URL) throws -> Data {
+    static func readFB2(_ url: URL) throws -> BookDocument {
         let metadata = try FB2Reader.metadata(of: url)
         let raw = try Data(contentsOf: url)
         let text = String(decoding: raw, as: UTF8.self)
@@ -163,7 +236,13 @@ public enum Converter {
         guard !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ConversionError.emptyBook
         }
-        return MOBIWriter.write(MOBIWriter.Input(html: html, images: [], metadata: metadata))
+
+        var document = BookDocument(metadata: metadata)
+        document.sections = [BookDocument.Section(
+            path: url.lastPathComponent,
+            xhtml: "<html><body>\(html)</body></html>"
+        )]
+        return document
     }
 }
 

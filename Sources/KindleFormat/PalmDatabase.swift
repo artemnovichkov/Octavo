@@ -41,7 +41,11 @@ struct PalmDatabase {
         for (index, record) in records.enumerated() {
             output.appendBE32(UInt32(offset))
             output.append(0)  // attributes
-            output.append(contentsOf: [0, 0, UInt8(index & 0xFF)])  // unique id
+            // Unique id is three bytes wide, not one: a KF8 book runs to several hundred
+            // records, and truncating to a byte made them collide past 256.
+            output.append(contentsOf: [
+                UInt8(index >> 16 & 0xFF), UInt8(index >> 8 & 0xFF), UInt8(index & 0xFF),
+            ])
             offset += record.count
         }
         output.appendBE16(0)  // two-byte gap before the first record

@@ -1,5 +1,6 @@
 import CalibreLibrary
 import Foundation
+import KindleFormat
 import MTPKit
 import SyncEngine
 
@@ -9,6 +10,21 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 let apply = arguments.contains("--apply")
 let skipBackup = arguments.contains("--no-backup")
 let showOrphans = arguments.contains("--orphans")
+
+/// Overrides Octavo.app's Conversion setting for this run. Without it the CLI converts to
+/// whatever the app is set to, the same way --library defaults to the resolved library.
+/// A bad value is fatal rather than ignored: writing the wrong format to the device is not
+/// something to fall back from quietly.
+let conversionTarget: ConversionTarget = {
+    guard let index = arguments.firstIndex(of: "--format") else { return .preferred }
+    guard index + 1 < arguments.count,
+          let target = ConversionTarget(rawValue: arguments[index + 1].lowercased())
+    else {
+        print("Unknown format. Use --format azw3 or --format mobi.")
+        exit(1)
+    }
+    return target
+}()
 
 /// Same resolution the app uses, so the CLI reports on the library the window is showing.
 let libraryRoot: URL? = {
@@ -45,7 +61,9 @@ do {
     defer { try? session.close() }
 
     let engine = try SyncEngine(library: library, session: session)
+    engine.conversionTarget = conversionTarget
     print("Device: \(transport.device.product ?? "Kindle") — \(humanSize(Int64(engine.storage.freeSpace))) free")
+    print("Conversion target: \(conversionTarget.displayName)")
 
     let manifest = try engine.loadManifest()
     print("Manifest: \(manifest.entries.count) entries\(manifest.adoptedFromCalibre ? " (adopted from calibre)" : "")")
@@ -57,7 +75,8 @@ do {
     if !plan.send.isEmpty {
         print("\nTo send: \(plan.send.count) — \(humanSize(plan.totalBytes))")
         for item in plan.send {
-            print("  → \(item.filename) [\(item.reason.rawValue), \(humanSize(item.format.size))]")
+            let conversion = item.conversion.map { " → \($0.displayName)" } ?? ""
+            print("  → \(item.filename) [\(item.reason.rawValue), \(humanSize(item.format.size))\(conversion)]")
         }
     }
 

@@ -6,17 +6,22 @@ import MTPKit
 /// Formats the stock Kindle firmware can open from a sideloaded file, best first.
 public let kindleReadableFormats = ["KFX", "AZW3", "AZW", "MOBI", "PRC", "PDF", "TXT"]
 
-/// Formats Octavo can turn into a MOBI the Kindle opens, best first.
+/// Formats Octavo can turn into one the Kindle opens, best first.
 public let convertibleFormats = ["EPUB", "FB2", "CBZ"]
 
 public struct SendItem: Sendable {
     public let book: Book
-    /// The library format being sent — the source format when `needsConversion` is set.
+    /// The library format being sent — the source format when `conversion` is set.
     public let format: BookFormat
     public let filename: String
     public let reason: Reason
-    /// The Kindle cannot read `format`; it is converted to MOBI before sending.
-    public var needsConversion = false
+    /// Set when the Kindle cannot read `format`: what it is converted to before sending.
+    public var conversion: ConversionTarget?
+    /// A device file this send replaces under a different name. Set when the target format
+    /// changed, so the old copy is deleted rather than left behind as an orphan.
+    public var replaces: String?
+
+    public var needsConversion: Bool { conversion != nil }
 
     public enum Reason: String, Sendable {
         case new = "new"
@@ -61,6 +66,10 @@ public final class SyncEngine {
     /// files live — is never a write target.
     public let documentsHandle: UInt32
     public var conversionCache = ConversionCache.default
+    /// What EPUB, FB2 and CBZ are converted to. Set by the caller from the user's preference —
+    /// `plan` and `pruneConversionCache` read it, but `execute` reads `SendItem.conversion`
+    /// instead, so a plan stays coherent even if the setting changes while it runs.
+    public var conversionTarget = ConversionTarget.default
 
     /// Where `octavo-sync --apply` and the app's "back up before first sync" setting both pull
     /// documents/ to, by default — one constant so the two agree without either hardcoding it.
@@ -132,28 +141,40 @@ public final class SyncEngine {
                 if !book.formats.isEmpty { plan.unsupported.append(book) }
                 continue
             }
-            let converts = readable == nil
+            let target = readable == nil ? conversionTarget : nil
 
             let entry = manifest.entries[book.uuid]
             let existing = entry.flatMap { byName[$0.filename.lowercased()] }
             if let existing { claimed.insert(existing.id) }
 
-            let filename = entry?.filename
-                ?? targetFilename(for: book, format: format, converted: converts)
+            // The manifest's name normally wins, so the books calibre put on the device stay
+            // matched. The exception is a converted book whose target format changed: none of
+            // the staleness signals notice that, so it would keep its old extension forever.
+            //
+            // A retarget swaps the extension and *keeps the stem*. It must not re-derive the
+            // name: calibre transliterates differently than we do ("Zapovednik - Sergej
+            // Dovlatov" against our "Zapoviednik - Sierghiei Dovlatov"), and the .sdr sidecar
+            // holding reading progress and highlights is named after the stem. Renaming it
+            // would strand the user's place in the book.
+            let retarget = entry.map { Self.needsRetarget(entry: $0, target: target) } ?? false
+            let filename = entry.map { entry in
+                retarget ? Self.retargeted(entry.filename, to: target) : entry.filename
+            } ?? Self.targetFilename(for: book, format: format, convertedTo: target)
 
             guard let entry, let existing else {
                 plan.send.append(SendItem(
                     book: book, format: format, filename: filename,
                     reason: entry == nil ? .new : .missingOnDevice,
-                    needsConversion: converts
+                    conversion: target
                 ))
                 continue
             }
 
-            if Self.isStale(entry: entry, deviceObject: existing, book: book, format: format) {
+            if retarget || Self.isStale(entry: entry, deviceObject: existing, book: book, format: format) {
                 plan.send.append(SendItem(
                     book: book, format: format, filename: filename,
-                    reason: .changed, needsConversion: converts
+                    reason: .changed, conversion: target,
+                    replaces: retarget ? entry.filename : nil
                 ))
             } else {
                 plan.upToDate.append(book)
@@ -179,6 +200,21 @@ public final class SyncEngine {
         return false
     }
 
+    /// True when the device copy was converted to a different format than the one now wanted.
+    /// Separate from `isStale` because it needs the desired target rather than the recorded
+    /// past, and separate from `plan` so it can be tested without a device.
+    static func needsRetarget(entry: DeviceManifest.Entry, target: ConversionTarget?) -> Bool {
+        guard let target else { return false }
+        return (entry.filename as NSString).pathExtension.lowercased() != target.fileExtension
+    }
+
+    /// The same name under a different extension. Only the extension changes, so the `.sdr`
+    /// sidecar keyed to the stem keeps matching.
+    static func retargeted(_ filename: String, to target: ConversionTarget?) -> String {
+        guard let target else { return filename }
+        return "\((filename as NSString).deletingPathExtension).\(target.fileExtension)"
+    }
+
     public func bestFormat(for book: Book) -> BookFormat? {
         for name in kindleReadableFormats {
             if let format = book.format(name) { return format }
@@ -196,11 +232,15 @@ public final class SyncEngine {
 
     /// calibre's naming, kept so the 31 books already on the device stay matched:
     /// "Title - Author.ext", ASCII-transliterated.
-    public func targetFilename(for book: Book, format: BookFormat, converted: Bool = false) -> String {
+    public static func targetFilename(
+        for book: Book,
+        format: BookFormat,
+        convertedTo target: ConversionTarget? = nil
+    ) -> String {
         let title = Self.asciiSanitized(book.title)
         let author = Self.asciiSanitized(book.authorDisplay)
         let stem = "\(title) - \(author)".prefix(180)
-        return "\(stem).\(converted ? "mobi" : format.format.lowercased())"
+        return "\(stem).\(target?.fileExtension ?? format.format.lowercased())"
     }
 
     /// Kept as a thin alias so the sync engine and the library agree on naming.
@@ -239,10 +279,14 @@ public final class SyncEngine {
             }
             onProgress?(Progress(item: item, index: index, total: plan.send.count))
 
-            // EPUB, FB2 and CBZ become a MOBI first; the result is cached on disk.
-            let source = item.needsConversion
-                ? try conversionCache.mobi(for: item.book, format: item.format, in: library.root)
-                : item.book.url(of: item.format, in: library.root)
+            // EPUB, FB2 and CBZ become an AZW3 or a MOBI first; the result is cached on disk.
+            let source = if let target = item.conversion {
+                try conversionCache.converted(
+                    for: item.book, source: item.format, target: target, in: library.root
+                )
+            } else {
+                item.book.url(of: item.format, in: library.root)
+            }
             guard let data = FileManager.default.contents(atPath: source.path(percentEncoded: false)) else {
                 throw SyncError.fileMissing(source)
             }
@@ -251,12 +295,17 @@ public final class SyncEngine {
             // during it does not still cost a full upload.
             if shouldStop?() == true { break }
 
-            // Replacing a book means removing the old file first; .sdr sidecars with
-            // reading progress and annotations are left untouched.
-            if let existing = try documentsChildren().first(where: {
-                $0.filename.caseInsensitiveCompare(item.filename) == .orderedSame
-            }) {
-                try session.delete(handle: existing.id)
+            // Replacing a book means removing the old file first — including the copy under a
+            // previous extension when the target format changed, which would otherwise become
+            // an orphan. .sdr sidecars are named after the stem, not the extension, so reading
+            // progress and annotations survive the rename untouched.
+            let children = try documentsChildren()
+            for name in [item.filename, item.replaces].compactMap(\.self) {
+                if let existing = children.first(where: {
+                    $0.filename.caseInsensitiveCompare(name) == .orderedSame
+                }) {
+                    try session.delete(handle: existing.id)
+                }
             }
 
             try session.sendFile(
@@ -291,8 +340,11 @@ public final class SyncEngine {
     public func pruneConversionCache(books: [Book]) {
         var wanted: Set<String> = []
         for book in books {
-            guard bestFormat(for: book) == nil, let format = convertibleFormat(for: book) else { continue }
-            wanted.insert(conversionCache.cachedURL(for: book, format: format).lastPathComponent)
+            guard bestFormat(for: book) == nil, let source = convertibleFormat(for: book) else { continue }
+            wanted.insert(
+                conversionCache.cachedURL(for: book, source: source, target: conversionTarget)
+                    .lastPathComponent
+            )
         }
         conversionCache.prune(keeping: wanted)
     }

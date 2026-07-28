@@ -54,9 +54,12 @@ final class OPFParser: NSObject, XMLParserDelegate {
     private var currentRole: String?
 
     private var manifest: [String: String] = [:]  // id -> href
+    private var mediaTypes: [String: String] = [:]  // id -> media-type
     private var spine: [String] = []  // itemref idrefs, in reading order
+    private var spineTocID: String?
     private var coverID: String?
     private var coverProperty: String?
+    private var navID: String?
 
     /// Reading order resolved to hrefs relative to the OPF.
     var spineHrefs: [String] { spine.compactMap { manifest[$0] } }
@@ -64,6 +67,21 @@ final class OPFParser: NSObject, XMLParserDelegate {
     var coverHref: String? {
         if let coverProperty { return coverProperty }
         return coverID.flatMap { manifest[$0] }
+    }
+
+    /// The EPUB 2 NCX, named either by `<spine toc="…">` or by its media type.
+    var ncxHref: String? {
+        if let spineTocID, let href = manifest[spineTocID] { return href }
+        return mediaTypes.first { $0.value == "application/x-dtbncx+xml" }.flatMap { manifest[$0.key] }
+    }
+
+    /// The EPUB 3 navigation document, if the manifest marks one.
+    var navHref: String? { navID.flatMap { manifest[$0] } }
+
+    /// Hrefs of every stylesheet in the manifest. Order is not meaningful here — what applies
+    /// to a section is whatever that section's own `<link>` tags say.
+    var stylesheetHrefs: [String] {
+        mediaTypes.filter { $0.value == "text/css" }.compactMap { manifest[$0.key] }
     }
 
     init(fallbackTitle: String) {
@@ -95,10 +113,13 @@ final class OPFParser: NSObject, XMLParserDelegate {
         case "item":
             if let id = attributes["id"], let href = attributes["href"] {
                 manifest[id] = href
-                if attributes["properties"]?.contains("cover-image") == true {
-                    coverProperty = href
-                }
+                mediaTypes[id] = attributes["media-type"]?.lowercased()
+                let properties = attributes["properties"] ?? ""
+                if properties.contains("cover-image") { coverProperty = href }
+                if properties.split(separator: " ").contains("nav") { navID = id }
             }
+        case "spine":
+            spineTocID = attributes["toc"]
         case "itemref":
             if let idref = attributes["idref"] { spine.append(idref) }
         case "meta":

@@ -1,4 +1,5 @@
 import Foundation
+import KindleFormat
 import Observation
 import SyncEngine
 
@@ -19,6 +20,8 @@ final class Preferences {
         static let backupBeforeFirst = "sync.backupBeforeFirst"
         static let backupDirectory = "sync.backupDirectory"
         static let pruneAfterSync = "conversion.pruneAfterSync"
+        /// Aliased rather than repeated: the CLIs read the same key through `ConversionTarget`.
+        static let conversionTarget = ConversionTarget.defaultsKey
         static let rememberFilter = "library.rememberFilter"
         static let lastFilter = "library.lastFilter"
         static let confirmRemoval = "device.confirmRemoval"
@@ -36,6 +39,9 @@ final class Preferences {
         didSet { defaults.set(backupDirectory.path(percentEncoded: false), forKey: Key.backupDirectory) }
     }
     var pruneCacheAfterSync: Bool { didSet { defaults.set(pruneCacheAfterSync, forKey: Key.pruneAfterSync) } }
+    var conversionTarget: ConversionTarget {
+        didSet { defaults.set(conversionTarget.rawValue, forKey: Key.conversionTarget) }
+    }
     var rememberLastFilter: Bool { didSet { defaults.set(rememberLastFilter, forKey: Key.rememberFilter) } }
     var lastFilter: String { didSet { defaults.set(lastFilter, forKey: Key.lastFilter) } }
     var confirmDeviceRemoval: Bool { didSet { defaults.set(confirmDeviceRemoval, forKey: Key.confirmRemoval) } }
@@ -56,6 +62,8 @@ final class Preferences {
         // Bools default to false from an absent key, but these three read "on" until the user
         // says otherwise — an object() check is what tells "never set" apart from "set to false".
         pruneCacheAfterSync = defaults.object(forKey: Key.pruneAfterSync) as? Bool ?? true
+        conversionTarget = defaults.string(forKey: Key.conversionTarget)
+            .flatMap(ConversionTarget.init(rawValue:)) ?? .default
         rememberLastFilter = defaults.object(forKey: Key.rememberFilter) as? Bool ?? true
         confirmDeviceRemoval = defaults.object(forKey: Key.confirmRemoval) as? Bool ?? true
         lastFilter = defaults.string(forKey: Key.lastFilter) ?? "all"

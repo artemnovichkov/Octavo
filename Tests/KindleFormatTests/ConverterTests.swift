@@ -15,7 +15,7 @@ private func sample(_ ext: String) -> URL? {
 @Test func convertsEPUBToReadableMOBI() throws {
     guard let epub = sample("epub") else { return }
     let source = EbookReader.metadata(of: epub)
-    let mobi = try Converter.convertEPUB(epub)
+    let mobi = MOBIWriter.write(try Converter.readEPUB(epub))
 
     #expect(mobi.count > 1024)
     #expect(mobi.subdata(in: 60..<68) == Data("BOOKMOBI".utf8))
@@ -38,7 +38,7 @@ private func sample(_ ext: String) -> URL? {
 
 @Test func convertsComicToMOBI() throws {
     guard let cbz = sample("cbz") else { return }
-    let mobi = try Converter.convertComic(cbz)
+    let mobi = MOBIWriter.write(try Converter.readComic(cbz))
     let parsed = try MOBIReader.metadata(of: mobi, fallbackTitle: "fallback")
     #expect(parsed.cover != nil)
     #expect(parsed.title != "fallback")
@@ -51,7 +51,7 @@ private func sample(_ ext: String) -> URL? {
 /// Header fields have to match the reference file calibre produced for this library.
 @Test func headerMatchesCalibreReference() throws {
     guard let epub = sample("epub") else { return }
-    let mobi = try Converter.convertEPUB(epub)
+    let mobi = MOBIWriter.write(try Converter.readEPUB(epub))
     let offsets = try MOBIReader.recordOffsets(mobi)
     let record0 = offsets[0]
     let mobiHeader = record0 + 16

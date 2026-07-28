@@ -16,21 +16,28 @@ public struct ConversionCache: Sendable {
         self.directory = directory
     }
 
-    public func cachedURL(for book: Book, format: BookFormat) -> URL {
+    /// `source` is the library format being converted *from*, `target` the Kindle format being
+    /// converted *to*. Only the extension carries the target, so switching it leaves the entries
+    /// for the other one valid rather than orphaning the whole cache.
+    public func cachedURL(for book: Book, source: BookFormat, target: ConversionTarget) -> URL {
         let stamp = Int(book.lastModified.timeIntervalSince1970)
-        let key = "\(book.uuid)-\(format.format.lowercased())-\(format.size)-\(stamp)"
-        return directory.appending(path: "\(key).mobi")
+        let key = "\(book.uuid)-\(source.format.lowercased())-\(source.size)-\(stamp)"
+        return directory.appending(path: "\(key).\(target.fileExtension)")
     }
 
-    /// Converts if needed and returns the MOBI on disk.
-    public func mobi(for book: Book, format: BookFormat, in library: URL) throws -> URL {
-        let destination = cachedURL(for: book, format: format)
+    /// Converts if needed and returns the converted file on disk.
+    public func converted(
+        for book: Book,
+        source: BookFormat,
+        target: ConversionTarget,
+        in library: URL
+    ) throws -> URL {
+        let destination = cachedURL(for: book, source: source, target: target)
         if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
             return destination
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let source = book.url(of: format, in: library)
-        return try Converter.convert(source, to: destination)
+        return try Converter.convert(book.url(of: source, in: library), to: destination, target: target)
     }
 
     /// Drops cached files that no current book claims.
