@@ -81,9 +81,13 @@ struct AppCommands: Commands {
         }
 
         CommandMenu("Device") {
-            Button("Sync") { Task { await model.sync() } }
+            Button("Sync All") { Task { await model.sync() } }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(!model.isConnected || model.syncProgress != nil)
+
+            Button("Send Selected to Device") { model.send(model.selectedBooks) }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+                .disabled(!model.isConnected || model.syncProgress != nil || model.selectedSends.isEmpty)
 
             Button("Cancel Sync") { model.cancelSync() }
                 .keyboardShortcut(".")

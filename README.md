@@ -38,6 +38,9 @@ Metadata editor with live catalogue search:
 
 - **Syncs to the Kindle over MTP** — no cloud, no email-to-Kindle, no Amazon account. Plug the
   cable in and Octavo notices; a diff against the device says what is missing.
+- **Sends the whole library or just a selection** — select books and the toolbar button becomes
+  *Send N Selected*; deselect and it syncs everything again. The same is in the context menu, the
+  multi-selection pane and Device ▸ Send Selected to Device (`⌥⌘S`), next to Sync All (`⇧⌘S`).
 - **Converts what the Kindle cannot read** — EPUB, CBZ and FB2 become AZW3 (or MOBI 6, if you
   prefer) on the way out, with the result cached.
 - **Edits metadata in calibre's own schema** — title, authors, series, publisher, tags, ISBN,

@@ -127,11 +127,20 @@ struct DetailPane: View {
 
     var body: some View {
         if model.selection.count > 1 {
-            ContentUnavailableView(
-                "\(Plural.books(model.selection.count)) selected",
-                systemImage: "books.vertical",
-                description: Text("Right-click the list for actions on everything selected.")
-            )
+            ContentUnavailableView {
+                Label("\(Plural.books(model.selection.count)) selected", systemImage: "books.vertical")
+            } description: {
+                Text("Right-click the list for actions on everything selected.")
+            } actions: {
+                let pending = model.selectedSends
+                if model.isConnected, !pending.isEmpty {
+                    Button("Send \(Plural.books(pending.count)) to device") {
+                        Task { await model.sync(only: model.selection) }
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(model.syncProgress != nil)
+                }
+            }
         } else if let id = model.selection.first, let book = model.books.first(where: { $0.id == id }) {
             BookDetailView(book: book)
         } else {
@@ -235,11 +244,18 @@ struct BookTable: View {
             }
             Button("Show in Finder", systemImage: "folder") { model.revealInFinder(chosen) }
             Divider()
+            Button(sendTitle(for: ids), systemImage: "arrow.up.circle") { model.send(chosen) }
+                .disabled(!model.isConnected || model.syncProgress != nil || model.pendingSends(in: ids).isEmpty)
             Button("Remove from device", systemImage: "eject", role: .destructive) {
                 model.requestRemoval(chosen)
             }
             .disabled(!chosen.contains { model.status(of: $0) == .synced })
         }
+    }
+
+    private func sendTitle(for ids: Set<Book.ID>) -> String {
+        let count = model.pendingSends(in: ids).count
+        return count > 1 ? "Send \(count) to device" : "Send to device"
     }
 
     @ViewBuilder

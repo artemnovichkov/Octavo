@@ -94,6 +94,13 @@ used to sit inline in the toolbar lives in its popover instead, so `.failed` vs 
 now a tint difference (orange vs secondary), not a wording one — `.failed` is still reserved for
 actionable errors, per the rule above.
 
+`DeviceStatusButton`'s neighbour, the Send button, follows the selection only when the selection
+has something to send (`AppModel.selectedSends`), and the whole library otherwise — so clicking an
+already-synced book to read its details never takes the full sync away. A selection-only run goes
+through `sync(only:)`, which still hands `DeviceController.sync` the *whole* library: cache pruning
+keeps exactly what `books` would produce, so passing just the selection would delete every other
+book's cached conversion.
+
 ### Concurrency
 
 `MTPTransport`/`MTPSession`/`SyncEngine` are not Sendable and must never cross a concurrency

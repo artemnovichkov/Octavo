@@ -501,7 +501,8 @@ final class AppModel {
         isCancellingSync = true
     }
 
-    func sync() async {
+    /// `only` limits the run to those books; `nil` syncs the whole library.
+    func sync(only: Set<Book.ID>? = nil) async {
         guard isConnected, syncProgress == nil else { return }
         let epoch = deviceEpoch
         syncRun += 1
@@ -511,7 +512,8 @@ final class AppModel {
         isCancellingSync = false
 
         let books = self.books
-        syncProgress = SyncProgress(current: "Preparing…", index: 0, total: plan?.send.count ?? 0)
+        let planned = only.map { ids in pendingSends(in: ids).count } ?? plan?.send.count ?? 0
+        syncProgress = SyncProgress(current: "Preparing…", index: 0, total: planned)
         defer {
             syncProgress = nil
             syncCancellation = nil
@@ -540,6 +542,7 @@ final class AppModel {
         do {
             let done = try await device.sync(
                 books: books,
+                only: only,
                 target: Preferences.shared.conversionTarget,
                 pruneCache: Preferences.shared.pruneCacheAfterSync,
                 shouldStop: { flag.isCancelled }
@@ -594,6 +597,22 @@ final class AppModel {
         } else {
             Task { await removeFromDevice(books) }
         }
+    }
+
+    /// What the current plan would send for `ids` — books already on the device or unsupported
+    /// drop out, so this is empty when there is nothing to send among them.
+    func pendingSends(in ids: Set<Book.ID>) -> [SendItem] {
+        guard !ids.isEmpty else { return [] }
+        return (plan?.send ?? []).filter { ids.contains($0.book.id) }
+    }
+
+    /// The selection's share of the plan. Non-empty is what switches the toolbar's Send
+    /// button from the whole library to the selection.
+    var selectedSends: [SendItem] { pendingSends(in: selection) }
+
+    /// Sends just these books; the table's context menu and Device ▸ Send Selected use it.
+    func send(_ books: [Book]) {
+        Task { await sync(only: Set(books.map(\.id))) }
     }
 
     /// The current table selection resolved against `books` — what the Library and Device
