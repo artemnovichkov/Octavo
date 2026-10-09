@@ -12,3 +12,8 @@ Octavo.xcodeproj/
 Octavo.xcworkspace/
 Derived/
 .tuist-bin/
+
+# Signing secrets
+*.p12
+*.p8
+p12-password

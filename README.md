@@ -63,21 +63,15 @@ Metadata editor with live catalogue search:
 ## Install
 
 Download the latest `Octavo-<version>-macos-arm64.zip` from
-[Releases](https://github.com/artemnovichkov/Octavo/releases/latest), unzip it, then **remove the
-quarantine flag** before moving the app into `/Applications`:
+[Releases](https://github.com/artemnovichkov/Octavo/releases/latest), unzip it and move `Octavo.app`
+into `/Applications`. The app is signed with a Developer ID and notarized by Apple, so it opens
+like any other.
+
+The CLI tarball is not notarized. Clear the quarantine flag on the binaries before running them:
 
 ```sh
-xattr -dr com.apple.quarantine ~/Downloads/Octavo.app
+xattr -d com.apple.quarantine mtpprobe octavo-sync octavo-convert
 ```
-
-The app is signed ad-hoc and not notarized — a Developer ID certificate costs $99 a year, and this
-is a hobby project — so Gatekeeper refuses it on first launch until the flag is gone. Note that
-`Control-click ▸ Open` no longer works as an override on macOS 15 and later; the only GUI route is
-to attempt a launch, dismiss the warning, and press **Open Anyway** in
-*System Settings ▸ Privacy & Security*.
-
-If you instead see *"Octavo is damaged and can't be opened"*, that is a broken signature rather than
-quarantine — please [open an issue](https://github.com/artemnovichkov/Octavo/issues).
 
 Requires macOS 26 or later on Apple Silicon.
 

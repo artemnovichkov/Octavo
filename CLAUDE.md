@@ -69,9 +69,13 @@ signature relies on), re-verifies the unpacked copy, and publishes the zip plus 
 `SHA256SUMS.txt`. It is **not idempotent** — a failed run after the tag was pushed needs
 `gh release delete <tag> --yes` and the tag deleted on both sides before re-tagging. Both workflows
 pin `runs-on: macos-26`; an unpinned `macos-latest` would let the toolchain move between a green CI
-run and a release build. The shipped app is ad-hoc signed and not notarized, so users must clear
-`com.apple.quarantine` — the README says so, and `Control-click ▸ Open` is not an alternative on
-macOS 15+.
+run and a release build. The shipped app is signed with a Developer ID (hardened runtime,
+secure timestamp), notarized and stapled: `make-app.sh` signs with `OCTAVO_SIGN_IDENTITY` when set
+and ad-hoc otherwise, so local builds need no certificate. The workflow needs five secrets —
+`DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`
+— and fails rather than shipping unsigned when one is missing. It trusts notarytool's JSON
+`status`, not its exit code, and runs `spctl --assess` on the unpacked zip. The CLI tarball is
+deliberately left un-notarized, so its binaries still need `com.apple.quarantine` cleared.
 
 ## Architecture
 

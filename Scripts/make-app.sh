@@ -51,9 +51,15 @@ PLIST
 # A malformed injected version would otherwise get sealed into the signature.
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
-# Ad-hoc signature is enough for a locally built app; USB access needs no entitlement
-# because the MTP interface is unclaimed by any system driver.
-codesign --force --sign - "$APP" >/dev/null 2>&1
+# Ad-hoc by default, which is enough for a locally built app. The release workflow sets
+# OCTAVO_SIGN_IDENTITY to its Developer ID: notarization then needs the hardened runtime and a
+# secure timestamp. USB access needs no entitlement either way — the app is not sandboxed and
+# the MTP interface is unclaimed by any system driver.
+if [[ -n "${OCTAVO_SIGN_IDENTITY:-}" ]]; then
+    codesign --force --options runtime --timestamp --sign "$OCTAVO_SIGN_IDENTITY" "$APP"
+else
+    codesign --force --sign - "$APP" >/dev/null 2>&1
+fi
 
 echo "$APP ($OCTAVO_VERSION build $OCTAVO_BUILD)"
 du -sh "$APP" | cut -f1 | xargs echo "Size:"

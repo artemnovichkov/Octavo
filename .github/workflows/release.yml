@@ -43,15 +43,70 @@ jobs:
       - name: Build every product
         run: swift build -c release
 
+      # A throwaway keychain holding only the Developer ID certificate, deleted in the last step.
+      # The identity name is read back from it, so it is not a secret of its own.
+      - name: Import the Developer ID certificate
+        id: cert
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          : "${P12_BASE64:?DEVELOPER_ID_P12_BASE64 secret is not set}"
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)"
+          : "${identity:?no Developer ID Application identity in the certificate}"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+
       - name: Assemble Octavo.app
         env:
           OCTAVO_VERSION: ${{ steps.v.outputs.version }}
           OCTAVO_BUILD: ${{ github.run_number }}
+          OCTAVO_SIGN_IDENTITY: ${{ steps.cert.outputs.identity }}
         run: ./Scripts/make-app.sh release
 
+      # notarytool's exit code is not trusted on its own: the JSON status must say Accepted,
+      # and anything else prints Apple's log, which names the offending file. The ticket is
+      # then stapled into the bundle, so Gatekeeper passes it offline too.
+      - name: Notarize and staple
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          : "${ASC_KEY_P8:?ASC_KEY_P8 secret is not set}"
+          key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$key"
+          auth=(--key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+
+          ditto -c -k --keepParent build/Octavo.app "$RUNNER_TEMP/notarize.zip"
+          result="$(xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" "${auth[@]}" \
+            --wait --timeout 20m --output-format json)"
+          echo "$result"
+          id="$(echo "$result" | plutil -extract id raw -)"
+          status="$(echo "$result" | plutil -extract status raw -)"
+          if [[ "$status" != "Accepted" ]]; then
+            xcrun notarytool log "$id" "${auth[@]}"
+            exit 1
+          fi
+          rm "$key"
+
+          xcrun stapler staple build/Octavo.app
+
       # ditto, not zip: it is Apple's archiver for signed bundles and keeps the extended
-      # attributes the ad-hoc signature needs. A DMG would not help — quarantine propagates
-      # out of a DMG exactly as it does out of a zip.
+      # attributes a signature relies on. Zipped after stapling, so the ticket ships inside.
       - name: Package
         id: pkg
         env:
@@ -70,16 +125,19 @@ jobs:
           ls -l dist
           echo "app_zip=$app_zip" >> "$GITHUB_OUTPUT"
 
-      # Catches "Octavo is damaged and can't be opened" here rather than on a user's Mac.
+      # Catches "Octavo is damaged and can't be opened" — or a Gatekeeper rejection — here
+      # rather than on a user's Mac.
       - name: Verify the signature survives the round trip
         run: |
           rm -rf "$RUNNER_TEMP/verify"
           mkdir -p "$RUNNER_TEMP/verify"
           ditto -x -k "${{ steps.pkg.outputs.app_zip }}" "$RUNNER_TEMP/verify"
-          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/verify/Octavo.app"
-          plutil -lint "$RUNNER_TEMP/verify/Octavo.app/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-            "$RUNNER_TEMP/verify/Octavo.app/Contents/Info.plist"
+          app="$RUNNER_TEMP/verify/Octavo.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist"
 
       - name: Create the GitHub release
         run: |
@@ -89,3 +147,7 @@ jobs:
             --verify-tag \
             --prerelease=${{ steps.v.outputs.prerelease }} \
             dist/*
+
+      - name: Delete the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
