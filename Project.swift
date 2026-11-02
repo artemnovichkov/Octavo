@@ -11,7 +11,7 @@ let project = Project(
             destinations: .macOS,
             product: .app,
             bundleId: "org.octavo.Octavo",
-            deploymentTargets: .macOS("26.0"),
+            deploymentTargets: .macOS("15.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "Octavo",
                 "CFBundleIconName": "Octavo",
@@ -35,7 +35,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "org.octavo.OctavoTests",
-            deploymentTargets: .macOS("26.0"),
+            deploymentTargets: .macOS("15.0"),
             sources: ["Tests/OctavoTests/**"],
             dependencies: [.target(name: "Octavo")]
         ),
@@ -44,7 +44,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "org.octavo.MTPKitTests",
-            deploymentTargets: .macOS("26.0"),
+            deploymentTargets: .macOS("15.0"),
             sources: ["Tests/MTPKitTests/**"],
             dependencies: [.package(product: "MTPKit")]
         ),
@@ -53,7 +53,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "org.octavo.CalibreLibraryTests",
-            deploymentTargets: .macOS("26.0"),
+            deploymentTargets: .macOS("15.0"),
             sources: ["Tests/CalibreLibraryTests/**"],
             dependencies: [.package(product: "CalibreLibrary")]
         ),
@@ -62,7 +62,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "org.octavo.SyncEngineTests",
-            deploymentTargets: .macOS("26.0"),
+            deploymentTargets: .macOS("15.0"),
             sources: ["Tests/SyncEngineTests/**"],
             dependencies: [.package(product: "SyncEngine")]
         ),
@@ -71,7 +71,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "org.octavo.MetadataFetchTests",
-            deploymentTargets: .macOS("26.0"),
+            deploymentTargets: .macOS("15.0"),
             sources: ["Tests/MetadataFetchTests/**"],
             dependencies: [.package(product: "MetadataFetch")]
         ),
@@ -80,7 +80,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "org.octavo.KindleFormatTests",
-            deploymentTargets: .macOS("26.0"),
+            deploymentTargets: .macOS("15.0"),
             sources: ["Tests/KindleFormatTests/**"],
             dependencies: [.package(product: "KindleFormat")]
         ),

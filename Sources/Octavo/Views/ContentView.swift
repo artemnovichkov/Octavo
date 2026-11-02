@@ -31,7 +31,7 @@ struct ContentView: View {
         .toolbar {
             DeviceToolbar()
 
-            ToolbarSpacer(.fixed, placement: .primaryAction)
+            FixedToolbarSpacer()
 
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -137,7 +137,7 @@ struct DetailPane: View {
                     Button("Send \(Plural.books(pending.count)) to device") {
                         Task { await model.sync(only: model.selection) }
                     }
-                    .buttonStyle(.glassProminent)
+                    .glassButtonStyle(prominent: true)
                     .disabled(model.syncProgress != nil)
                 }
             }

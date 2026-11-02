@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Octavo",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v15)],
     products: [
         .library(name: "MTPKit", targets: ["MTPKit"]),
         .library(name: "CalibreLibrary", targets: ["CalibreLibrary"]),

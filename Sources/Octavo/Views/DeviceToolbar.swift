@@ -9,7 +9,7 @@ struct DeviceToolbar: ToolbarContent {
             DeviceStatusButton()
         }
 
-        ToolbarSpacer(.fixed, placement: .primaryAction)
+        FixedToolbarSpacer()
 
         // Refresh stays icon-only like every other secondary action; Sync is the only titled,
         // tinted button in the bar, and only while there's something to send — so the eye lands
@@ -26,15 +26,11 @@ struct DeviceToolbar: ToolbarContent {
         }
     }
 
-    // `.glass`/`.glassProminent` are distinct concrete PrimitiveButtonStyle types, so picking
-    // between them can't be a ternary on one `.buttonStyle(_:)` call — split into two branches.
-    //
     // The button follows the selection whenever the selection has something to send, and the
     // whole library otherwise — so clicking a book that is already on the Kindle (to read its
     // details) never takes the full sync away, and the title always says which one it is.
-    @ViewBuilder
     private var syncButton: some View {
-        let label = Button {
+        Button {
             Task { await model.sync(only: selected.isEmpty ? nil : model.selection) }
         } label: {
             Label(syncTitle, systemImage: "arrow.up.arrow.down")
@@ -42,12 +38,7 @@ struct DeviceToolbar: ToolbarContent {
         .labelStyle(.titleAndIcon)
         .disabled(!canSync)
         .help(syncHelp)
-
-        if canSync {
-            label.buttonStyle(.glassProminent)
-        } else {
-            label.buttonStyle(.glass)
-        }
+        .glassButtonStyle(prominent: canSync)
     }
 
     private var selected: [SendItem] { model.selectedSends }

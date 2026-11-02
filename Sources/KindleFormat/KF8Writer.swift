@@ -100,21 +100,25 @@ public enum KF8Writer {
         )
 
         var database = PalmDatabase(name: document.metadata.title)
-        database.records =
-            [header]
-            + textRecords
-            + [Data([0])]  // the spacer calibre leaves between the text and the indices
-            + chunkRecords
-            + skeletonRecords
-            + guideRecords
-            + ncxRecords
-            + document.resources
-            + [
+        // Spelled as a typed list of runs rather than a `+` chain: the chain's overload search
+        // blows the type checker's time limit on slower machines.
+        let runs: [[Data]] = [
+            [header],
+            textRecords,
+            [Data([0])],  // the spacer calibre leaves between the text and the indices
+            chunkRecords,
+            skeletonRecords,
+            guideRecords,
+            ncxRecords,
+            document.resources,
+            [
                 fdstRecord(ranges),
                 MOBIRecord0.flisRecord(),
                 MOBIRecord0.fcisRecord(textLength: text.count),
                 MOBIRecord0.eofRecord(),
-            ]
+            ],
+        ]
+        database.records = Array(runs.joined())
         return database.serialized()
     }
 

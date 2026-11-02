@@ -9,7 +9,7 @@ A 4 MB replacement for the 1 GB calibre, working on the very same library.
 
 [![CI](https://github.com/artemnovichkov/Octavo/actions/workflows/ci.yml/badge.svg)](https://github.com/artemnovichkov/Octavo/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/artemnovichkov/Octavo?include_prereleases)](https://github.com/artemnovichkov/Octavo/releases/latest)
-[![macOS](https://img.shields.io/badge/macOS-26%2B-black?logo=apple)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-15%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
@@ -76,7 +76,7 @@ The CLI tarball is not notarized. Clear the quarantine flag on the binaries befo
 xattr -d com.apple.quarantine mtpprobe octavo-sync octavo-convert
 ```
 
-Requires macOS 26 or later on Apple Silicon.
+Requires macOS 15 or later. Release builds are Apple Silicon only; on an Intel Mac, build from source.
 
 ## Tech stack
 
@@ -91,7 +91,7 @@ No external dependencies at all — SwiftPM resolves nothing, everything comes f
 | `SyncEngine` | Library↔device diff, on-device manifest, conversion cache, transfer. |
 | `Octavo` | **SwiftUI** app: `@MainActor @Observable` model over a `DeviceController` actor. |
 
-Swift 6 language mode with strict concurrency, Swift Testing, SwiftPM, macOS 26+, Apple Silicon.
+Swift 6 language mode with strict concurrency, Swift Testing, SwiftPM, macOS 15+, Apple Silicon or Intel.
 Dependencies run one way: `Octavo → SyncEngine → {MTPKit, CalibreLibrary, KindleFormat}`.
 
 ## Build from source
