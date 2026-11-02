@@ -237,6 +237,12 @@ These cost debugging time; do not rediscover them.
   All three came off calibre's files; `NCXStructureTests` holds ours and theirs to the same rules.
 - **`fcisRecord` is 52 bytes.** It was 44 for a long time — two fields short, one constant wrong
   — which no Mac-side check notices.
+- **`swift build` can record the deployment target as the binary's SDK version, which costs
+  Liquid Glass.** Xcode 27.2 linked against the 27.2 SDK and still wrote `sdk 15.0`, and macOS 27
+  then drew the whole window in the old design, with nothing failing anywhere; Xcode 26.2 is
+  reported to write the real version. `make-app.sh` stamps the real SDK with `vtool` before
+  signing, so only the bundle is covered: `.build/debug/Octavo` keeps whatever the toolchain
+  wrote, and CI does not check the field. `vtool -show-build` shows it.
 - The device is jailbroken with dead leftovers (`jb.sh`, `patchedUks.sqsh`, `mesquito/`) — the OTA to
   5.19.5 killed the exploit, so KOReader is not an option.
 

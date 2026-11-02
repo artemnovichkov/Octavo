@@ -22,9 +22,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/Octavo"
 
-# `swift build` records the deployment target as the binary's SDK version too, and macOS 26+
-# reads an "sdk 15.0" binary as an old app and withholds Liquid Glass. Stamp the SDK actually
-# built against; the minimum OS stays at MIN_MACOS. Must happen before codesign.
+# With Xcode 27.2, `swift build` records the deployment target as the binary's SDK version too
+# (Xcode 26.2 writes the real one), and macOS 27 reads an "sdk 15.0" binary as an old app and
+# withholds Liquid Glass. Stamp the SDK actually built against, which changes nothing where the
+# field was already right; the minimum OS stays at MIN_MACOS. Must happen before codesign.
 BIN="$APP/Contents/MacOS/Octavo"
 vtool -set-build-version macos "$MIN_MACOS" "$(xcrun --sdk macosx --show-sdk-version)" \
     -replace -output "$BIN.new" "$BIN"
