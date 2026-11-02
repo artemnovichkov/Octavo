@@ -11,6 +11,8 @@ OCTAVO_VERSION="${OCTAVO_VERSION#v}"  # tolerate a raw tag name such as v0.2.1
 OCTAVO_BUILD="${OCTAVO_BUILD:-1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/Octavo.app"
+# Must match `.macOS(.v15)` in Package.swift.
+MIN_MACOS="15.0"
 
 cd "$ROOT"
 swift build -c "$CONFIGURATION" --product Octavo
@@ -20,12 +22,21 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/Octavo"
 
+# `swift build` records the deployment target as the binary's SDK version too, and macOS 26+
+# reads an "sdk 15.0" binary as an old app and withholds Liquid Glass. Stamp the SDK actually
+# built against; the minimum OS stays at MIN_MACOS. Must happen before codesign.
+BIN="$APP/Contents/MacOS/Octavo"
+vtool -set-build-version macos "$MIN_MACOS" "$(xcrun --sdk macosx --show-sdk-version)" \
+    -replace -output "$BIN.new" "$BIN"
+mv "$BIN.new" "$BIN"
+chmod +x "$BIN"
+
 # Committed, not generated here — Scripts/make-icon.swift redraws it when the artwork
 # changes. Must land before codesign so the signature seals it.
 cp "$ROOT/Resources/Octavo.icns" "$APP/Contents/Resources/Octavo.icns"
 
-# Unquoted delimiter: the body carries no $, backtick or backslash of its own, so the two
-# version substitutions below are the only expansions.
+# Unquoted delimiter: the body carries no $, backtick or backslash of its own, so the three
+# substitutions below are the only expansions.
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -40,7 +51,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${OCTAVO_VERSION}</string>
     <key>CFBundleVersion</key><string>${OCTAVO_BUILD}</string>
-    <key>LSMinimumSystemVersion</key><string>15.0</string>
+    <key>LSMinimumSystemVersion</key><string>${MIN_MACOS}</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHumanReadableCopyright</key><string>Sync your calibre library with Kindle e-readers</string>
