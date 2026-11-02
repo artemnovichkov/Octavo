@@ -20,9 +20,28 @@ private func files(withExtension ext: String) -> [URL] {
         #expect(meta.title != url.deletingPathExtension().lastPathComponent, "название не разобралось: \(url.lastPathComponent)")
         #expect(!meta.authors.isEmpty, "автор не разобрался: \(url.lastPathComponent)")
     }
+    // An EPUB names its cover in up to four different places, and two of them point at the
+    // cover *page* rather than the picture. Before those were followed, a fifth of the corpus
+    // came back coverless — which is what a user sees as "no covers in the list".
     let covers = urls.compactMap { EbookReader.metadata(of: $0).cover }
-    #expect(covers.count >= urls.count * 3 / 4)
+    #expect(covers.count >= urls.count * 17 / 20, "обложки нашлись только у \(covers.count) из \(urls.count)")
     for cover in covers { #expect(isImage(cover)) }
+}
+
+/// An EPUB that keeps its cover under a name saying so must never come back coverless: that
+/// is the easiest case there is, and the one the old single-candidate lookup still missed.
+@Test func findsCoversNamedCover() throws {
+    for url in files(withExtension: "epub") {
+        let archive = try ZipArchive(url: url)
+        let named = archive.entries.first {
+            let name = ($0.path as NSString).lastPathComponent.lowercased()
+            return name.hasPrefix("cover") && ["jpg", "jpeg", "png"].contains(($0.path as NSString).pathExtension.lowercased())
+        }
+        guard named != nil else { continue }
+        let cover = EbookReader.metadata(of: url).cover
+        #expect(cover != nil, "обложка не нашлась: \(url.lastPathComponent)")
+        if let cover { #expect(isImage(cover), "вместо картинки что-то другое: \(url.lastPathComponent)") }
+    }
 }
 
 @Test func readsMOBICorpus() {
@@ -66,7 +85,7 @@ private func isImage(_ data: Data) -> Bool {
     return head.starts(with: jpeg) || head.starts(with: png)
 }
 
-@Test func readsComicAndFB2() {
+@Test func readsComicAndFB2() throws {
     for url in files(withExtension: "cbz") {
         // CBZ has no metadata at all — the first page is the only thing worth taking.
         #expect(EbookReader.metadata(of: url).cover != nil)
@@ -74,5 +93,11 @@ private func isImage(_ data: Data) -> Bool {
     for url in files(withExtension: "fb2") {
         let meta = EbookReader.metadata(of: url)
         #expect(!meta.authors.isEmpty)
+        // FB2 keeps its images as base64 <binary> elements; a file holding one has a cover.
+        guard let text = try? String(contentsOf: url, encoding: .utf8),
+              text.range(of: "<binary[^>]+image/", options: .regularExpression) != nil
+        else { continue }
+        let cover = try #require(meta.cover, "обложка не нашлась: \(url.lastPathComponent)")
+        #expect(isImage(cover))
     }
 }

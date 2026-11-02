@@ -84,8 +84,8 @@ public enum Converter {
         }
 
         // The cover is pulled first so it lands at resource 0, which is what EXTH 201 records.
-        if let coverHref = parser.coverHref {
-            document.coverResourceIndex = resourceIndex(for: resolve(coverHref, from: base))
+        if let coverPath = EPUBReader.coverPath(in: archive, opfPath: opfPath, parser: parser) {
+            document.coverResourceIndex = resourceIndex(for: coverPath)
         }
 
         var stylesheetIndexByPath: [String: Int] = [:]

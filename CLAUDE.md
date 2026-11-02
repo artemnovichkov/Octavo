@@ -209,6 +209,14 @@ These cost debugging time; do not rediscover them.
   killed the process — in the app, Octavo quitting mid-sync with no error the user can act on.
   Every range derived from scanned bytes needs clamping, not an assumption about what a tag
   looks like.
+- **An EPUB names its cover in up to four places, and two of them point at the cover *page*.**
+  `OPFParser.coverCandidates` walks them in order — EPUB 3 `cover-image`, EPUB 2
+  `<meta name="cover">`, the `<guide>` reference, then any manifest image whose own name says
+  "cover" — and `EPUBReader.coverPath` takes the first whose bytes pass an image-magic check,
+  following an XHTML candidate one hop further to the `<img src>` it wraps. Without the magic
+  check a page of HTML lands in `cover.jpg`; without the extra hop a fifth of the corpus came
+  back coverless, which is what a user sees as "no covers". FB2 covers are base64 `<binary>`
+  elements named by `<coverpage>`, with the first image binary as the fallback.
 - **The conversion cache is keyed on the source file only** — uuid, size, mtime. Changing the
   converter itself invalidates nothing, so a re-sync silently reuses output built by the old code.
   `rm -rf ~/Library/Caches/Octavo/converted` after touching a writer, or you will test the last

@@ -169,6 +169,11 @@ private final class FB2Parser: NSObject, XMLParserDelegate {
     private var text = ""
     private var firstName = ""
     private var lastName = ""
+    /// `<coverpage><image l:href="#id"/></coverpage>`, without the leading '#'. The images
+    /// themselves are base64 `<binary>` elements at the end of the file, so the declaration
+    /// is always read before the bytes it names.
+    private var coverBinaryID: String?
+    private var capturingCover = false
 
     init(fallbackTitle: String) {
         self.fallbackTitle = fallbackTitle
@@ -191,11 +196,31 @@ private final class FB2Parser: NSObject, XMLParserDelegate {
         qualifiedName: String?,
         attributes: [String: String] = [:]
     ) {
-        path.append(elementName.lowercased())
+        let element = elementName.lowercased()
+        path.append(element)
         text = ""
-        if elementName.lowercased() == "sequence", inTitleInfo {
+
+        switch element {
+        case "sequence" where inTitleInfo:
             metadata.series = attributes["name"]
             metadata.seriesIndex = attributes["number"].flatMap(Double.init)
+        case "image" where path.contains("coverpage"):
+            let href = attributes["l:href"] ?? attributes["xlink:href"] ?? attributes["href"]
+            coverBinaryID = href.map { $0.hasPrefix("#") ? String($0.dropFirst()) : $0 }
+        case "binary":
+            // Either the declared cover, or — when the file declares none — the first image in
+            // it. FB2 writers put the cover first, and a portrait first illustration beats
+            // showing the reader a blank placeholder.
+            guard metadata.cover == nil,
+                  attributes["content-type"]?.lowercased().hasPrefix("image/") == true
+            else { break }
+            if let coverBinaryID {
+                capturingCover = attributes["id"] == coverBinaryID
+            } else {
+                capturingCover = true
+            }
+        default:
+            break
         }
     }
 
@@ -211,6 +236,14 @@ private final class FB2Parser: NSObject, XMLParserDelegate {
     ) {
         let element = elementName.lowercased()
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if element == "binary", capturingCover {
+            // An empty <binary> would otherwise stand in for the cover and keep the real one
+            // from being looked at, since the search stops at the first hit.
+            let decoded = Data(base64Encoded: value, options: .ignoreUnknownCharacters)
+            if let decoded, !decoded.isEmpty { metadata.cover = decoded }
+            capturingCover = false
+        }
 
         if inTitleInfo {
             switch element {
