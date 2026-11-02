@@ -106,7 +106,13 @@ enum Markup {
             let range = index..<(cursor + 1)
             let isClosing = index + 1 < bytes.count && bytes[index + 1] == slash
             let selfClosing = cursor > index + 1 && bytes[cursor - 1] == slash
-            var inner = (index + (isClosing ? 2 : 1))..<(selfClosing ? cursor - 1 : cursor)
+            // `</>` and `<//>` are both closing *and* self-closing, which leaves nothing
+            // between the delimiters and crosses the two ends. Sloppy EPUBs do contain them,
+            // and an unclamped range here is a trap — the whole conversion dies on one stray
+            // tag instead of skipping it.
+            let innerStart = index + (isClosing ? 2 : 1)
+            let innerEnd = selfClosing ? cursor - 1 : cursor
+            var inner = innerStart..<max(innerStart, innerEnd)
 
             var name = ""
             var attributes: [Tag.Attribute] = []

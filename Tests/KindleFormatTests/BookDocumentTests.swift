@@ -70,3 +70,28 @@ import Testing
         }
     }
 }
+
+/// Markup found in the wild is not well-formed. A stray `</>` used to cross the two ends of
+/// the tag's inner range and trap — which in the app is Octavo quitting mid-sync, not an error
+/// the user can act on. Found by fuzzing corpus EPUBs through the AZW3 writer.
+@Test func malformedTagsDoNotTrap() {
+    let samples = [
+        "</>", "<//>", "<p>x</ >y</p>", "<a></></a>", "<>", "< >", "</ />",
+        "<p class=\"a\"></><b/></p>", "<img src=\"a>b.jpg\"/>", "<p",
+    ]
+    for sample in samples {
+        let tags = Markup.tags(in: Array(sample.utf8))
+        #expect(tags.allSatisfy { $0.range.lowerBound <= $0.range.upperBound })
+    }
+}
+
+/// The same markup all the way through the AZW3 writer, which is where the trap surfaced.
+@Test func malformedMarkupStillConverts() {
+    var document = BookDocument(metadata: EbookMetadata(title: "Сломанная вёрстка"))
+    document.sections = [BookDocument.Section(
+        path: "broken.xhtml",
+        xhtml: "<html><body><p>Начало</></p><div></><p>Конец</p></body></html>"
+    )]
+    let azw3 = KF8Writer.write(document)
+    #expect(azw3.count > 0)
+}

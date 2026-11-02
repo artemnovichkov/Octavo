@@ -204,6 +204,11 @@ These cost debugging time; do not rediscover them.
   The new bytes are strictly better formed than what shipped before — the old writer claimed
   trailers it never wrote — but "better formed" is not "verified". Check it on the Kindle before
   relying on it as the fallback.
+- **Markup from real EPUBs is not well-formed, and range math on it traps.** `</>` is both a
+  closing and a self-closing tag, which crossed the ends of the inner range in `Markup.tags` and
+  killed the process — in the app, Octavo quitting mid-sync with no error the user can act on.
+  Every range derived from scanned bytes needs clamping, not an assumption about what a tag
+  looks like.
 - **The conversion cache is keyed on the source file only** — uuid, size, mtime. Changing the
   converter itself invalidates nothing, so a re-sync silently reuses output built by the old code.
   `rm -rf ~/Library/Caches/Octavo/converted` after touching a writer, or you will test the last
@@ -251,6 +256,11 @@ Any new test that reaches a catalogue needs that trait. Assertions must be speci
 breakage: earlier corpus tests only checked "cover is non-nil" and "title differs from the filename",
 which let a wrong codepage offset (mojibake Cyrillic) and a wrong image offset (text records
 returned as covers) pass unnoticed. Cover checks now require JPEG/PNG magic.
+
+Readers and writers also get fuzzed rather than only fed the corpus: mutating corpus EPUBs
+(truncate / bit-flip / zero-fill) through `octavo-convert` is what turned up the `</>` trap in
+`Markup.tags`. A crash there is the app quitting mid-sync, so malformed-markup cases live in
+`BookDocumentTests` as permanent regressions.
 
 Device-facing changes ultimately need a human to look at the Kindle screen — that is the only oracle
 for "does this book actually open".
