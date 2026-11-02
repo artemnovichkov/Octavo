@@ -75,6 +75,12 @@ struct AppCommands: Commands {
             Button("Refresh Library") { model.loadLibrary() }
                 .keyboardShortcut("r")
 
+            // For libraries built before the cover parsers learned the other places a cover
+            // hides: nothing re-reads a book after import, so those placeholders are permanent
+            // until something goes back over the files.
+            Button("Find Missing Covers") { model.rescanCovers() }
+                .disabled(model.store == nil || model.isScanningCovers)
+
             Button("Reveal Library in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([model.libraryRoot])
             }

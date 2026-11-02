@@ -150,6 +150,29 @@ extension CalibreLibraryStore {
         return stored
     }
 
+    /// Files a cover for a book already in the library: `cover.jpg` in its folder plus the
+    /// `has_cover` flag, which is what makes calibre show it too. calibre only ever reads
+    /// `cover.jpg`, whatever the bytes actually are, so a PNG goes under that name as well.
+    ///
+    /// Deliberately not `update(_:)`: that stamps `last_modified`, and `SyncEngine.isStale`
+    /// reads a newer `last_modified` as "re-send this book". Cover art is not part of what
+    /// goes to the device — a converted AZW3 carries the cover out of the source file, not out
+    /// of the library folder — so bumping it would re-upload the whole library for nothing.
+    @discardableResult
+    public func setCover(_ data: Data, for book: Book) throws -> Book {
+        guard !isReadOnly else { throw CalibreError.readOnly }
+        guard !data.isEmpty else { return book }
+
+        let directory = root.appending(path: book.path)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: directory.appending(path: "cover.jpg"), options: .atomic)
+        try database.run("UPDATE books SET has_cover = 1 WHERE id = ?", [.integer(book.id)])
+
+        var updated = book
+        updated.hasCover = true
+        return updated
+    }
+
     /// A book already in the library with the same title and author.
     public func duplicate(ofTitle title: String, authors: [String]) throws -> Book? {
         let sort = CalibreFunctions.authorSort(of: authors.isEmpty ? ["Unknown"] : authors)

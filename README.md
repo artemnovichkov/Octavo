@@ -50,6 +50,9 @@ Metadata editor with live catalogue search:
 - **Imports books** — drag files in or press `+`. EPUB, AZW3, AZW, MOBI, PRC, PDF, CBZ, FB2, TXT.
   Metadata comes out of the file itself: the OPF inside an EPUB, the EXTH header of an AZW3/MOBI,
   `title-info` in FB2, document attributes in a PDF, the first page of a CBZ as the cover.
+- **Finds covers a library is missing** — Library ▸ Find Missing Covers re-reads the file of every
+  book with no cover and files what it finds, so a library built before the cover parsers improved
+  does not have to be re-imported. Covers you set yourself are left alone.
 - **Never touches your reading progress** — `.sdr` folders, annotations and highlights are off
   limits by design, not by convention.
 - **Browses by author, series and tag** — the sidebar tallies counts per facet and has its own

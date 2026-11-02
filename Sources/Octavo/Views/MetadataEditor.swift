@@ -203,9 +203,10 @@ struct MetadataEditor: View {
             searchError = "Could not download the cover"
             return
         }
-        let destination = model.libraryRoot.appending(path: draft.path).appending(path: "cover.jpg")
         do {
-            try data.write(to: destination)
+            // Through the store rather than straight to disk: one writer of cover.jpg, which
+            // also means the `has_cover` flag cannot be forgotten here.
+            try model.store?.setCover(data, for: draft)
         } catch {
             // Was `try?` before, so a failure here looked exactly like "no cover offered".
             searchError = "Could not save the cover: \(error.localizedDescription)"

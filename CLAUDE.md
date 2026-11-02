@@ -219,6 +219,14 @@ These cost debugging time; do not rediscover them.
   check a page of HTML lands in `cover.jpg`; without the extra hop a fifth of the corpus came
   back coverless, which is what a user sees as "no covers". FB2 covers are base64 `<binary>`
   elements named by `<coverpage>`, with the first image binary as the fallback.
+- **Filing a cover must not stamp `last_modified`.** `CalibreLibraryStore.setCover` writes
+  `cover.jpg` and flips `has_cover` with a narrow UPDATE rather than going through `update(_:)`,
+  which always stamps the date — and `SyncEngine.isStale` reads a newer date as "re-send this
+  book", so a cover rescan would otherwise re-upload the whole library. Cover art never reaches
+  the device anyway: a converted AZW3 carries the cover out of the source file, not out of the
+  library folder. `settingACoverLeavesLastModifiedAlone` is the test holding that line.
+  `AppModel.rescanCovers` (Library ▸ Find Missing Covers) is the bulk path — only books with no
+  cover, parsing off the main actor, one cover in memory at a time.
 - **The conversion cache is keyed on the source file only** — uuid, size, mtime. Changing the
   converter itself invalidates nothing, so a re-sync silently reuses output built by the old code.
   `rm -rf ~/Library/Caches/Octavo/converted` after touching a writer, or you will test the last

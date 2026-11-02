@@ -208,3 +208,62 @@ private func makeSampleFile(_ name: String) throws -> URL {
     #expect(updated.formats.count == 1)  // same EPUB format, replaced rather than duplicated
     #expect(updated.format("EPUB")?.size == book.format("EPUB")?.size)
 }
+
+/// Filing a cover must not look like the book changed. `SyncEngine.isStale` reads a newer
+/// `last_modified` as "re-send this book", so stamping it here would re-upload the whole
+/// library the first time someone runs a cover rescan.
+@Test func settingACoverLeavesLastModifiedAlone() throws {
+    let library = makeEmptyLibrary()
+    defer { try? FileManager.default.removeItem(at: library) }
+    let store = try CalibreLibraryStore.create(at: library)
+
+    let sample = try makeSampleFile("sample.epub")
+    defer { try? FileManager.default.removeItem(at: sample.deletingLastPathComponent()) }
+    let book = try store.add(fileAt: sample, metadata: NewBook(title: "Без обложки", authors: ["Автор"]))
+    #expect(!book.hasCover)
+
+    let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x00, count: 32))
+    let covered = try store.setCover(jpeg, for: book)
+
+    #expect(covered.hasCover)
+    let onDisk = try #require(covered.coverURL(in: library))
+    #expect(try Data(contentsOf: onDisk) == jpeg)
+
+    let reread = try #require(try store.books().first { $0.id == book.id })
+    #expect(reread.hasCover)
+    #expect(reread.lastModified == book.lastModified)
+}
+
+/// Empty bytes are what a failed download or an unparsed file hands back. Writing them would
+/// flip `has_cover` on and leave a zero-byte cover.jpg that nothing can draw.
+@Test func settingAnEmptyCoverIsIgnored() throws {
+    let library = makeEmptyLibrary()
+    defer { try? FileManager.default.removeItem(at: library) }
+    let store = try CalibreLibraryStore.create(at: library)
+
+    let sample = try makeSampleFile("sample.epub")
+    defer { try? FileManager.default.removeItem(at: sample.deletingLastPathComponent()) }
+    let book = try store.add(fileAt: sample, metadata: NewBook(title: "Пусто", authors: ["Автор"]))
+
+    #expect(try store.setCover(Data(), for: book).hasCover == false)
+    #expect(try store.books().first { $0.id == book.id }?.hasCover == false)
+    #expect(!FileManager.default.fileExists(
+        atPath: library.appending(path: book.path).appending(path: "cover.jpg").path(percentEncoded: false)
+    ))
+}
+
+/// A read-only store is how every reading path opens the library, including the one the
+/// device controller holds open during a sync. It must refuse to write a cover.
+@Test func readOnlyStoreRefusesACover() throws {
+    let library = makeEmptyLibrary()
+    defer { try? FileManager.default.removeItem(at: library) }
+    let store = try CalibreLibraryStore.create(at: library)
+    let sample = try makeSampleFile("sample.epub")
+    defer { try? FileManager.default.removeItem(at: sample.deletingLastPathComponent()) }
+    let book = try store.add(fileAt: sample, metadata: NewBook(title: "Только чтение", authors: ["Автор"]))
+
+    let readOnly = try CalibreLibraryStore(root: library, readOnly: true)
+    #expect(throws: CalibreError.self) {
+        try readOnly.setCover(Data([0xFF, 0xD8, 0xFF, 0xE0]), for: book)
+    }
+}

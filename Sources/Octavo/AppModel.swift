@@ -103,6 +103,9 @@ final class AppModel {
     private(set) var planCounts: PlanCounts?
     private(set) var syncProgress: SyncProgress?
     private(set) var isCancellingSync = false
+    /// A cover rescan in flight. Separate from `syncProgress` because nothing about it touches
+    /// the device — it runs with no Kindle attached, and must not look like a transfer.
+    private(set) var coverScan: SyncProgress?
     var lastSyncSummary: String?
     var importSummary: ImportSummary?
     /// A library the user picked that turned out not to be one. Transient, because the library
@@ -163,6 +166,8 @@ final class AppModel {
     /// Set once a backup has run for the current connection, so "back up before first sync"
     /// backs up once per plug-in rather than before every sync. Reset on detach.
     private var hasBackedUpThisSession = false
+    /// Exposed so a test can wait for the scan it started; nothing else reads it.
+    private(set) var coverScanTask: Task<Void, Never>?
 
     /// `nil` means "resolve it": the remembered library, else calibre's own if it happens to be
     /// there, else nothing at all — which is the welcome screen, and writes nothing until the
@@ -619,6 +624,73 @@ final class AppModel {
     /// menus act on, same as the table's own context menu.
     var selectedBooks: [Book] {
         books.filter { selection.contains($0.id) }
+    }
+
+    // MARK: - Covers
+
+    /// Re-reads the source file of every book the library holds no cover for, and files what
+    /// it finds. Nothing re-reads a book once it has been imported, so a library built before
+    /// the cover parsers learned where else a cover hides keeps its placeholders forever —
+    /// this is the way out of that without re-adding every book by hand.
+    ///
+    /// Books that already have one are left alone: a cover can have been set by hand, or
+    /// fetched from a catalogue, and neither should be overwritten by whatever the file holds.
+    /// True from the moment a scan is asked for, not from the moment it starts reporting —
+    /// `coverScan` is only filled in once the task body runs, which is a window where a second
+    /// Find Missing Covers would start a second scan over the same books.
+    var isScanningCovers: Bool { coverScanTask != nil }
+
+    func rescanCovers() {
+        guard let store, !isScanningCovers else { return }
+        let candidates = books.filter { !$0.hasCover }
+        guard !candidates.isEmpty else {
+            lastSyncSummary = "Every book already has a cover"
+            return
+        }
+
+        let root = libraryRoot
+        coverScanTask = Task { @MainActor in
+            var found = 0
+            for (index, book) in candidates.enumerated() {
+                guard !Task.isCancelled else { break }
+                coverScan = SyncProgress(current: book.title, index: index, total: candidates.count)
+
+                // Parsing happens off the main actor: the whole point is a window that still
+                // draws while a few hundred books are read off disk.
+                let urls = book.formats.map { book.url(of: $0, in: root) }
+                let cover = await Task.detached { Self.firstCover(in: urls) }.value
+
+                guard let cover, (try? store.setCover(cover, for: book)) != nil else { continue }
+                found += 1
+            }
+
+            let cancelled = Task.isCancelled
+            coverScan = nil
+            coverScanTask = nil
+            if found > 0 {
+                // `hasCover` lives on the in-memory books, and the cache is keyed by book.
+                CoverCache.shared.removeAll()
+                loadLibrary()
+            }
+            lastSyncSummary = switch (cancelled, found) {
+            case (true, _): "Cover scan cancelled — covers found: \(found)"
+            case (false, 0): "No covers in the files of \(Plural.books(candidates.count))"
+            default: "Covers found: \(found)"
+            }
+        }
+    }
+
+    func cancelCoverScan() {
+        coverScanTask?.cancel()
+    }
+
+    /// The first format that yields a cover. A book can hold both an EPUB with none and an
+    /// AZW3 with one, so a single format is not enough to call it coverless.
+    nonisolated static func firstCover(in urls: [URL]) -> Data? {
+        for url in urls {
+            if let cover = EbookReader.metadata(of: url).cover, !cover.isEmpty { return cover }
+        }
+        return nil
     }
 
     func revealInFinder(_ books: [Book]) {

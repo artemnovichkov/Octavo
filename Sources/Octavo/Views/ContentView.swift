@@ -300,16 +300,25 @@ struct SyncStatusBar: View {
     var body: some View {
         Group {
             if let progress = model.syncProgress {
-                progressCard(progress)
+                progressCard(progress, isCancelling: model.isCancellingSync) { model.cancelSync() }
+            } else if let scan = model.coverScan {
+                // A cover rescan reads the library, never the device, so it shares the card
+                // but not the device wording — and it stops the moment it is asked to.
+                progressCard(scan, isCancelling: false) { model.cancelCoverScan() }
             } else if let summary = model.lastSyncSummary {
                 summaryCard(summary)
             }
         }
         .animation(.default, value: model.syncProgress == nil)
+        .animation(.default, value: model.coverScan == nil)
         .animation(.default, value: model.lastSyncSummary)
     }
 
-    private func progressCard(_ progress: AppModel.SyncProgress) -> some View {
+    private func progressCard(
+        _ progress: AppModel.SyncProgress,
+        isCancelling: Bool,
+        cancel: @escaping () -> Void
+    ) -> some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(progress.current).lineLimit(1).font(.callout)
@@ -318,8 +327,8 @@ struct SyncStatusBar: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Button(model.isCancellingSync ? "Cancelling…" : "Cancel") { model.cancelSync() }
-                .disabled(model.isCancellingSync)
+            Button(isCancelling ? "Cancelling…" : "Cancel", action: cancel)
+                .disabled(isCancelling)
         }
         .padding()
         .frame(maxWidth: 460)
