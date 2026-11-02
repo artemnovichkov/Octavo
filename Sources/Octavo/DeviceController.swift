@@ -105,9 +105,9 @@ actor DeviceController {
     /// Sends the planned books. Progress is reported through an isolated callback so the
     /// UI can update while the transfer runs.
     ///
-    /// `only` narrows the send to those book ids; `books` is still the whole library, because
-    /// cache pruning keeps exactly what `books` would produce and would otherwise throw away
-    /// every conversion outside the selection.
+    /// `only` narrows the send to those book ids; `books` is always the whole library, because
+    /// both cache pruning and orphan detection answer for the library as a whole and would
+    /// otherwise throw away every conversion outside the selection.
     func sync(
         books: [Book],
         only: Set<Book.ID>? = nil,
@@ -119,8 +119,7 @@ actor DeviceController {
         let engine = try requireEngine()
         engine.conversionTarget = target
         let manifest = try engine.loadManifest()
-        let scope = only.map { ids in books.filter { ids.contains($0.id) } } ?? books
-        let plan = try engine.plan(books: scope, manifest: manifest)
+        let plan = try engine.plan(books: books, manifest: manifest, only: only)
         guard !plan.isEmpty || manifest.adoptedFromCalibre else { return plan }
         _ = try engine.execute(plan, manifest: manifest, onProgress: progress, shouldStop: shouldStop)
         if pruneCache { engine.pruneConversionCache(books: books) }

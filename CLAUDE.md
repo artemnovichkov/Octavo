@@ -101,9 +101,11 @@ actionable errors, per the rule above.
 `DeviceStatusButton`'s neighbour, the Send button, follows the selection only when the selection
 has something to send (`AppModel.selectedSends`), and the whole library otherwise — so clicking an
 already-synced book to read its details never takes the full sync away. A selection-only run goes
-through `sync(only:)`, which still hands `DeviceController.sync` the *whole* library: cache pruning
-keeps exactly what `books` would produce, so passing just the selection would delete every other
-book's cached conversion.
+through `sync(only:)`, which still hands `DeviceController.sync` the *whole* library, and the
+narrowing happens in one place: `SyncEngine.plan(books:manifest:only:)` filters `plan.send` at the
+end. `books` stays whole because both cache pruning and orphan detection answer for the library as
+a whole — scoping them would delete every other book's cached conversion and call every unselected
+book's device file an orphan.
 
 ### Concurrency
 
@@ -264,6 +266,12 @@ Any new test that reaches a catalogue needs that trait. Assertions must be speci
 breakage: earlier corpus tests only checked "cover is non-nil" and "title differs from the filename",
 which let a wrong codepage offset (mojibake Cyrillic) and a wrong image offset (text records
 returned as covers) pass unnoticed. Cover checks now require JPEG/PNG magic.
+
+`SyncEngine` talks to `MTPDeviceSession`, not to `MTPSession` — six methods, extracted so the whole
+plan/execute path runs without hardware. `Tests/SyncEngineTests/FakeKindle.swift` is an in-memory
+device implementing it, and `SelectionSyncTests` drives selection scoping, staleness, cancellation
+and the `.bin` refusal through it with no cable attached. Anything above the USB transport belongs
+in a test there rather than in a session with a Kindle plugged in.
 
 Readers and writers also get fuzzed rather than only fed the corpus: mutating corpus EPUBs
 (truncate / bit-flip / zero-fill) through `octavo-convert` is what turned up the `</>` trap in

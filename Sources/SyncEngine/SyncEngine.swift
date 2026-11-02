@@ -60,7 +60,7 @@ public enum SyncError: Error, LocalizedError {
 
 public final class SyncEngine {
     public let library: CalibreLibraryStore
-    public let session: MTPSession
+    public let session: MTPDeviceSession
     public let storage: MTPStorage
     /// Every write goes under this handle. The storage root — where firmware update
     /// files live — is never a write target.
@@ -76,7 +76,7 @@ public final class SyncEngine {
     public static let defaultBackupDirectory = URL.homeDirectory
         .appending(path: "Library/Application Support/Octavo/device-backup")
 
-    public init(library: CalibreLibraryStore, session: MTPSession) throws {
+    public init(library: CalibreLibraryStore, session: MTPDeviceSession) throws {
         self.library = library
         self.session = session
 
@@ -115,7 +115,9 @@ public final class SyncEngine {
             bytes,
             named: DeviceManifest.filename,
             storageID: storage.id,
-            parent: documentsHandle
+            parent: documentsHandle,
+            modified: Date(),
+            progress: nil
         )
     }
 
@@ -125,7 +127,11 @@ public final class SyncEngine {
 
     // MARK: - Planning
 
-    public func plan(books: [Book], manifest: DeviceManifest) throws -> SyncPlan {
+    /// `only` narrows what the plan will *send* to those book ids; everything else is still
+    /// walked, so `orphans` stays the whole-library answer rather than declaring every
+    /// unselected book's file an orphan. `upToDate`/`unsupported` are likewise unnarrowed —
+    /// a scoped plan is a send list, not a different view of the library.
+    public func plan(books: [Book], manifest: DeviceManifest, only: Set<Book.ID>? = nil) throws -> SyncPlan {
         let onDevice = try documentsChildren().filter { !$0.isFolder }
         // calibre's manifest lowercases lpath, the filesystem does not.
         var byName: [String: MTPObject] = [:]
@@ -184,6 +190,7 @@ public final class SyncEngine {
         plan.orphans = onDevice.filter {
             !claimed.contains($0.id) && $0.filename != DeviceManifest.filename
         }
+        if let only { plan.send = plan.send.filter { only.contains($0.book.id) } }
         return plan
     }
 
@@ -313,7 +320,8 @@ public final class SyncEngine {
                 named: item.filename,
                 storageID: storage.id,
                 parent: documentsHandle,
-                modified: item.book.lastModified
+                modified: item.book.lastModified,
+                progress: nil
             )
 
             updated.entries[item.book.uuid] = DeviceManifest.Entry(
